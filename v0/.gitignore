@@ -1,6 +1,10 @@
 target/
 project/target/
 project/project/
+
+# 生成的 SystemVerilog 与仿真产物；要提交的那份由 scripts/publish.sh 送到提交仓库
+build/
+
 .bsp/
 .metals/
 .bloop/
