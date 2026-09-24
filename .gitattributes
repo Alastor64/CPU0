@@ -1,0 +1,9 @@
+# 统一换行符：这些文件主要在 WSL/Linux 下被工具读取，必须是 LF。
+# Windows 版 git 默认 core.autocrlf=true 会写成 CRLF，
+# 而 CRLF 的 shell 脚本在 WSL 里会报 "bad interpreter"。
+*.sh    text eol=lf
+*.scala text eol=lf
+*.sbt   text eol=lf
+*.sv    text eol=lf
+*.tcl   text eol=lf
+*.md    text eol=lf
