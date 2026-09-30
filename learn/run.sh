@@ -9,6 +9,7 @@
 #   ./run.sh compile                  只编译
 #   ./run.sh clean                    删掉编译产物
 #   ./run.sh console                  打开带本工程 classpath 的 Scala REPL
+#   ./run.sh mains                    列出工程里所有能跑的 main
 #   ./run.sh test                     跑 src/test/scala 下的全部测试
 #   ./run.sh test mylib.BitsSpec      只跑指定的测试类（可以写多个）
 #   ./run.sh learn.MyFirst            编译并运行这个 main（= sbt runMain）
@@ -46,6 +47,11 @@ case "$action" in
   compile | clean | console | update)
     set -- "$action"
     ;;
+  mains | list)
+    # 问 sbt 要"发现了哪些入口"，就是 sbt 自己 run 时会列出来的那份清单。
+    # 顺带作用：编译不过时这条命令会把编译错误报出来，比等 runMain 报错更早发现。
+    set -- "show discoveredMainClasses"
+    ;;
   test)
     # 带类名时只跑这些类，不带就跑全部
     if [ "$#" -gt 0 ]; then
@@ -71,7 +77,7 @@ case "$action" in
     ;;
   *)
     echo "run.sh: 不认识 '$action'。" >&2
-    echo "run.sh: 子命令有 compile / clean / console / test / sbt；" >&2
+    echo "run.sh: 子命令有 compile / clean / console / mains / test / sbt；" >&2
     echo "run.sh: 要跑 main 请写全限定名（带包名，例如 learn.MyFirst）。" >&2
     exit 2
     ;;

@@ -18,6 +18,7 @@ cd /mnt/d/CPU/my/learn
 
 ./run.sh                           # 进 sbt 交互模式
 ./run.sh compile                   # 只编译
+./run.sh mains                     # 看有哪些 main 能跑
 ./run.sh test                      # 跑 src/test/scala 下的全部测试
 ./run.sh test mylib.BitsSpec       # 只跑指定的测试类（可以写多个）
 ./run.sh learn.MyFirst             # 编译并运行这个 main
@@ -26,7 +27,7 @@ cd /mnt/d/CPU/my/learn
 ```
 
 约定很简单：**带点号的参数当成主类的全限定名**（包名.对象名），其余当成 sbt 子命令。
-子命令有 `compile` / `clean` / `console` / `test` / `sbt`：
+子命令有 `compile` / `clean` / `console` / `mains` / `test` / `sbt`：
 
 - `./run.sh console` 打开带本工程 classpath 的 Scala REPL；
 - `./run.sh sbt <命令...>` 是逃生舱，后面的参数原样交给 sbt，例如一次跑多个入口。
@@ -39,11 +40,31 @@ cd /mnt/d/CPU/my/learn
 
 产物在 `target/scala-2.13/classes`（已被 `.gitignore` 忽略，不会提交）。
 
+## 看有哪些 main 能跑
+
+```sh
+./run.sh mains
+```
+
+它问的是 sbt 的 `discoveredMainClasses`，也就是 sbt 自己 `run` 时会列出来的那份清单，
+输出形如：
+
+```text
+[info] * learn.Generate
+```
+
+一个入口要先能**编译通过**才会出现在这里。所以清单是空的、或者少了一个你刚加的文件时，
+先看编译有没有过——`./run.sh mains` 这时会把编译错误直接报出来（它本身就依赖编译结果）。
+
+顺手一提：`list` 是 `mains` 的同义词，用哪个都行。
+
 ## 运行指定的 main
 
 ```sh
 ./run.sh learn.MyFirst
 ```
+
+（不知道写什么类名时，用上面的 `./run.sh mains` 看清单。）
 
 多给的参数会原样进 `args`（下面例子里 `args(0) == "hello"`、`args(1) == "42"`）：
 
