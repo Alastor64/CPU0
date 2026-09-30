@@ -16,6 +16,7 @@
 #   ./run.sh learn.MyFirst hello 42   运行 main，并把 hello、42 传给它
 #   ./run.sh run HelloWorld           同上，用于"类名不带点号"的情况（默认包里的类）
 #   ./run.sh sbt "runMain learn.A" "runMain learn.B"   原样执行任意 sbt 命令
+#   ./run.sh help                     打印这份用法说明
 #
 # 约定：参数不带点号 -> 当成 sbt 任务名原样执行；
 #       参数带点号   -> 当成主类的全限定名（包名.对象名）；
@@ -34,6 +35,13 @@ fi
 action=${1:-}
 if [ "$#" -gt 0 ]; then shift; fi
 
+# 用法错误统一从这儿退出：状态码 2 表示"参数不对"，
+# 和子命令自己失败（比如编译不过）区分开。
+die() {
+  echo "run.sh: $*" >&2
+  exit 2
+}
+
 # 主类名先记在这儿，非空的话统一翻译成 runMain
 main_class=""
 
@@ -50,12 +58,20 @@ case "$action" in
     set --
     ;;
   compile | clean | console | update)
+    # 这些子命令不吃参数，多给了就报错，免得打错字悄悄跑成别的东西
+    [ "$#" -eq 0 ] || die "'$action' 后面不能再跟参数"
     set -- "$action"
     ;;
   mains | list)
     # 问 sbt 要"发现了哪些入口"，就是 sbt 自己 run 时会列出来的那份清单。
     # 顺带作用：编译不过时这条命令会把编译错误报出来，比等 runMain 报错更早发现。
+    [ "$#" -eq 0 ] || die "'$action' 后面不能再跟参数"
     set -- "show discoveredMainClasses"
+    ;;
+  help | -h | --help)
+    # 把文件开头那段注释当帮助打印：从第 2 行起，到 set -euo pipefail 为止
+    awk 'NR == 1 { next } /^set -euo pipefail/ { exit } /^#/ { sub(/^# ?/, ""); print }' "$0"
+    exit 0
     ;;
   test)
     # 带类名时只跑这些类，不带就跑全部
@@ -67,18 +83,12 @@ case "$action" in
     ;;
   sbt)
     # 逃生舱：后面的参数全部原样当 sbt 命令
-    if [ "$#" -eq 0 ]; then
-      echo "run.sh: sbt 后面要跟至少一条命令，例如 ./run.sh sbt \"runMain learn.A\"" >&2
-      exit 2
-    fi
+    [ "$#" -gt 0 ] || die 'sbt 后面要跟至少一条命令，例如 ./run.sh sbt "runMain learn.A"'
     ;;
   run)
     # 显式写法：下一个参数就是主类名。主要给"默认包里的类"用，
     # 它们没有包名，也就没有点号，没法走下面的 *.* 分支。
-    if [ "$#" -eq 0 ]; then
-      echo "run.sh: run 后面要跟主类名，例如 ./run.sh run HelloWorld" >&2
-      exit 2
-    fi
+    [ "$#" -gt 0 ] || die "run 后面要跟主类名，例如 ./run.sh run HelloWorld"
     main_class=$1
     shift
     ;;
@@ -88,7 +98,7 @@ case "$action" in
     ;;
   *)
     echo "run.sh: 不认识 '$action'。" >&2
-    echo "run.sh: 子命令有 compile / clean / console / mains / test / sbt；" >&2
+    echo "run.sh: 子命令有 compile / clean / console / help / mains / test / sbt；" >&2
     echo "run.sh: 要跑 main 请写全限定名（例如 learn.MyFirst）；" >&2
     echo "run.sh: 类名不含包名时改用 ./run.sh run <类名>。" >&2
     exit 2
