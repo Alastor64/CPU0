@@ -28,6 +28,9 @@ WSL 的 PATH 里会混进 Windows 侧的工具。如果 Metals 找到了 Windows
 
 改完重载窗口，Metals 就会用它导入构建。
 
+保存时的 Scala 格式化由 `.scalafmt.conf` 决定：每个 sbt 工程根目录放一份
+（Metals 只在工作区根目录找），没有它每次保存都会弹「找不到 .scalafmt.conf」。
+
 ## 约定
 
 - **换行符**：仓库根的 `.gitattributes` 强制这些脚本与源码用 LF，
