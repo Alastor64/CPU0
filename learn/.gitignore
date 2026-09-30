@@ -6,3 +6,6 @@ build/
 .metals/
 .bloop/
 .vscode/
+
+# 编辑器（Metals）自动生成的 sbt 插件声明，每个开发者本地各生成一份
+project/metals.sbt
