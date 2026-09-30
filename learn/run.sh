@@ -14,10 +14,12 @@
 #   ./run.sh test mylib.BitsSpec      只跑指定的测试类（可以写多个）
 #   ./run.sh learn.MyFirst            编译并运行这个 main（= sbt runMain）
 #   ./run.sh learn.MyFirst hello 42   运行 main，并把 hello、42 传给它
+#   ./run.sh run HelloWorld           同上，用于"类名不带点号"的情况（默认包里的类）
 #   ./run.sh sbt "runMain learn.A" "runMain learn.B"   原样执行任意 sbt 命令
 #
 # 约定：参数不带点号 -> 当成 sbt 任务名原样执行；
-#       参数带点号   -> 当成主类的全限定名（包名.对象名）。
+#       参数带点号   -> 当成主类的全限定名（包名.对象名）；
+#                      类名不带点号时（文件里没写 package）用 `run <类名>` 这种写法。
 set -euo pipefail
 
 # 工程目录 = 本脚本所在目录；sbt 启动器在仓库根的 tools/ 下
@@ -31,6 +33,9 @@ fi
 
 action=${1:-}
 if [ "$#" -gt 0 ]; then shift; fi
+
+# 主类名先记在这儿，非空的话统一翻译成 runMain
+main_class=""
 
 case "$action" in
   "")
@@ -67,21 +72,37 @@ case "$action" in
       exit 2
     fi
     ;;
-  *.*)
-    # 主类名：编译并运行它，剩下的参数原样传给 main
-    sbt_command="runMain $action"
-    if [ "$#" -gt 0 ]; then
-      sbt_command="$sbt_command $*"
+  run)
+    # 显式写法：下一个参数就是主类名。主要给"默认包里的类"用，
+    # 它们没有包名，也就没有点号，没法走下面的 *.* 分支。
+    if [ "$#" -eq 0 ]; then
+      echo "run.sh: run 后面要跟主类名，例如 ./run.sh run HelloWorld" >&2
+      exit 2
     fi
-    set -- "$sbt_command"
+    main_class=$1
+    shift
+    ;;
+  *.*)
+    # 带点号：当成主类的全限定名
+    main_class=$action
     ;;
   *)
     echo "run.sh: 不认识 '$action'。" >&2
     echo "run.sh: 子命令有 compile / clean / console / mains / test / sbt；" >&2
-    echo "run.sh: 要跑 main 请写全限定名（带包名，例如 learn.MyFirst）。" >&2
+    echo "run.sh: 要跑 main 请写全限定名（例如 learn.MyFirst）；" >&2
+    echo "run.sh: 类名不含包名时改用 ./run.sh run <类名>。" >&2
     exit 2
     ;;
 esac
+
+# 编译并运行这个主类，剩下的参数原样传给 main
+if [ -n "$main_class" ]; then
+  sbt_command="runMain $main_class"
+  if [ "$#" -gt 0 ]; then
+    sbt_command="$sbt_command $*"
+  fi
+  set -- "$sbt_command"
+fi
 
 cd -- "$project_dir"
 if [ "$#" -gt 0 ]; then

@@ -23,12 +23,14 @@ cd /mnt/d/CPU/my/learn
 ./run.sh test mylib.BitsSpec       # 只跑指定的测试类（可以写多个）
 ./run.sh learn.MyFirst             # 编译并运行这个 main
 ./run.sh learn.MyFirst hello 42    # 运行 main，并把 hello、42 传给它
+./run.sh run HelloWorld            # 类名不含包名时用这种写法
 ./run.sh clean                     # 删掉编译产物
 ```
 
 约定很简单：**带点号的参数当成主类的全限定名**（包名.对象名），其余当成 sbt 子命令。
-子命令有 `compile` / `clean` / `console` / `mains` / `test` / `sbt`：
+子命令有 `compile` / `clean` / `console` / `mains` / `run` / `test` / `sbt`：
 
+- `./run.sh run <类名> [参数...]` 是"显式指定主类"，给类名不带点号的情况用；
 - `./run.sh console` 打开带本工程 classpath 的 Scala REPL；
 - `./run.sh sbt <命令...>` 是逃生舱，后面的参数原样交给 sbt，例如一次跑多个入口。
 
@@ -60,11 +62,23 @@ cd /mnt/d/CPU/my/learn
 
 ## 运行指定的 main
 
+文件里写了 `package` 的话，类名就带包名，直接写全限定名：
+
 ```sh
-./run.sh learn.MyFirst
+./run.sh learn.MyFirst        # 文件里写了 package learn
 ```
 
-（不知道写什么类名时，用上面的 `./run.sh mains` 看清单。）
+（不知道有哪些入口时，先 `./run.sh mains` 看清单。）
+
+**文件里没写 `package` 时**，类就在"默认包"里，全限定名就是类名本身、没有点号。
+这种写法会和子命令撞上，所以要用显式的 `run`：
+
+```sh
+./run.sh run HelloWorld       # 文件里没写 package，类名是 HelloWorld
+```
+
+（顺带建议：学的时候也写上 `package learn` 之类的包名，一来和工程里的其他文件一致，
+二来以后搬到 CPU 代码里不用改名。）
 
 多给的参数会原样进 `args`（下面例子里 `args(0) == "hello"`、`args(1) == "42"`）：
 
