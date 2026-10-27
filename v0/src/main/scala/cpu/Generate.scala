@@ -29,7 +29,10 @@ object Generate extends App {
   )
 
   new java.io.File(outDir).mkdirs()
-  val sv = ChiselStage.emitSystemVerilog(gen = new StudentTop, firtoolOpts = firtoolOpts)
+  val sv = ChiselStage.emitSystemVerilog(
+    gen = new cpu2026.StudentTop,
+    firtoolOpts = firtoolOpts,
+  )
   val file = new java.io.File(outDir, "student_top.sv")
   java.nio.file.Files.write(file.toPath, sv.getBytes("UTF-8"))
   println(s"[gen] $file")
