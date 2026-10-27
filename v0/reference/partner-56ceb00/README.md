@@ -12,7 +12,6 @@ Only the top-level `*.scala` files and `notes.md` from
 editor metadata, test-run directories, the course framework, and Git
 metadata are intentionally excluded.
 
-This is the unmodified upstream snapshot. The working copy under
-`v0/src/main/scala/partner` removes dependencies on external test
-utilities and is wired to the local sbt build. It is not yet a compiling
-CPU implementation.
+This is the unmodified upstream snapshot, retained for comparison. The
+maintained implementation now lives under `v0/src/main/scala/cpu`; it was
+rebuilt after the imported revision proved not to compile.
