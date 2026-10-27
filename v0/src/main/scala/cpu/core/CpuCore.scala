@@ -53,18 +53,17 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
 
   val memory = Module(new AxiMemory)
   val readArbiter = Module(new Arbiter(new MemoryReadRequest, 2))
-  val iCache = Module(
-    new WordCache(config, config.iCacheSets, sourceId = 0, writable = false),
-  )
+  val iCache = Module(new InstructionCache(config, config.iCacheSets, sourceId = 0))
   val dCache = Module(
     new WordCache(config, config.dCacheSets, sourceId = 1, writable = true),
   )
   val execution = Module(new ExecutionUnit(config))
   val writeback = execution.io.writeback
-  val branchFlush =
-    writeback.valid && writeback.bits.isControl && writeback.bits.branchTaken
+  val writebackPc = Wire(UInt(32.W))
+  val branchFlush = Wire(Bool())
+  writebackPc := 0.U
+  branchFlush := false.B
 
-  iCache.io.write := 0.U.asTypeOf(new CacheWrite)
   dCache.io.write := 0.U.asTypeOf(new CacheWrite)
   execution.io.issue.valid := false.B
   execution.io.issue.bits := 0.U.asTypeOf(new ExecutionRequest)
@@ -120,7 +119,6 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
   val fetchPc = RegInit(0.U(32.W))
   val fetchPending = RegInit(false.B)
   val fetchBarrier = RegInit(false.B)
-  val waitingForControl = RegInit(false.B)
   val halted = RegInit(false.B)
 
   io.halted := halted
@@ -131,20 +129,49 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
   iCache.io.req.bits.addr := fetchPc
 
   val fetchResponse = iCache.io.resp
-  val fetchEnqueue = fetchResponse.valid && (fetchCount < config.fetchQueueDepth.U)
-  val fetchedIsControl = controlWord(fetchResponse.bits.data)
+  val fetchEnqueueCount = Wire(UInt(3.W))
+  val fetchEnqueue = Wire(Bool())
+  val fetchedControl = Wire(Bool())
+  val fetchPrefixStop = Wire(Vec(5, Bool()))
+  val fetchWordCanEnqueue = Wire(Vec(4, Bool()))
+  fetchedControl := false.B
+  fetchPrefixStop(0) := false.B
 
   when(iCache.io.req.fire) {
     fetchPending := true.B
   }
+
+  val fetchRoom = config.fetchQueueDepth.U - fetchCount
+  for (i <- 0 until 4) {
+    val wordIndex = Cat(0.U(1.W), fetchResponse.bits.startOffset) + i.U(3.W)
+    val withinLine = wordIndex < 4.U
+    val safeWordIndex = Mux(withinLine, wordIndex, 0.U)
+    val instruction = fetchResponse.bits.words(safeWordIndex)
+    val hasRoom = withinLine && i.U < fetchRoom
+    val canEnqueue = fetchResponse.valid && hasRoom && !fetchPrefixStop(i)
+    val queueIndex = (fetchWritePtr + i.U) % config.fetchQueueDepth.U
+    val instructionPc = fetchPc + (i.U << 2)
+    fetchWordCanEnqueue(i) := canEnqueue
+    fetchPrefixStop(i + 1) := fetchPrefixStop(i) || (hasRoom && controlWord(instruction))
+    when(canEnqueue) {
+      fetchQueueValid(queueIndex) := true.B
+      fetchQueuePc(queueIndex) := instructionPc
+      fetchQueueInstruction(queueIndex) := instruction
+    }
+  }
+  fetchEnqueue := fetchWordCanEnqueue.asUInt.orR
+  fetchEnqueueCount := PopCount(fetchWordCanEnqueue)
+  fetchedControl := VecInit((0 until 4).map { i =>
+    fetchWordCanEnqueue(i) && controlWord(fetchResponse.bits.words(
+      Mux(fetchResponse.bits.startOffset + i.U < 4.U, fetchResponse.bits.startOffset + i.U, 0.U),
+    ))
+  }).asUInt.orR
+
   when(fetchEnqueue) {
-    fetchQueueValid(fetchWritePtr) := true.B
-    fetchQueuePc(fetchWritePtr) := fetchPc
-    fetchQueueInstruction(fetchWritePtr) := fetchResponse.bits.data
-    fetchWritePtr := (fetchWritePtr + 1.U) % config.fetchQueueDepth.U
-    fetchPc := fetchPc + 4.U
+    fetchWritePtr := (fetchWritePtr + fetchEnqueueCount) % config.fetchQueueDepth.U
+    fetchPc := fetchPc + (fetchEnqueueCount << 2)
     fetchPending := false.B
-    when(fetchedIsControl) {
+    when(fetchedControl) {
       fetchBarrier := true.B
     }
   }
@@ -171,21 +198,16 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
 
   val robFree = config.robDepth.U - robCount
   val dispatchCount = Wire(UInt((config.robIndexBits + 1).W))
-  dispatchCount := 0.U
-  dispatchStop(0) := waitingForControl || halted || branchFlush || robFree === 0.U
+  dispatchStop(0) := halted || branchFlush || robFree === 0.U
 
   for (i <- 0 until config.issueWidth) {
     val canDispatch =
       !dispatchStop(i) && i.U < fetchCount && i.U < robFree &&
         decoded(i).io.decoded.valid
     dispatchValid(i) := canDispatch
-    dispatchStop(i + 1) :=
-      dispatchStop(i) ||
-        (canDispatch && isControlOp(decoded(i).io.decoded.op))
-    when(canDispatch) {
-      dispatchCount := i.U + 1.U
-    }
+    dispatchStop(i + 1) := dispatchStop(i)
   }
+  dispatchCount := PopCount(dispatchValid)
 
   for (i <- 0 until config.issueWidth) {
     val decodedEntry = decoded(i).io.decoded
@@ -257,9 +279,6 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
       rob(slot).branchTaken := false.B
       rob(slot).branchTarget := 0.U
 
-      when(isControlOp(decodedEntry.op)) {
-        waitingForControl := true.B
-      }
     }
   }
 
@@ -270,7 +289,7 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
   }
 
   when(fetchEnqueue || dispatchCount > 0.U) {
-    fetchCount := fetchCount + fetchEnqueue.asUInt - dispatchCount
+    fetchCount := fetchCount + fetchEnqueueCount - dispatchCount
   }
 
   val storeValid = RegInit(VecInit(Seq.fill(config.storeBufferDepth)(false.B)))
@@ -297,7 +316,7 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
   val issueSlot = Wire(UInt(config.robIndexBits.W))
 
   val functionalUnitAvailable =
-    execution.io.issue.ready && !writeback.valid && !halted
+    execution.io.issue.ready && !halted
 
   for (age <- 0 until config.robDepth) {
     val slot = (robHead + age.U) % config.robDepth.U
@@ -393,22 +412,32 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
       rob(i).storeData := writeback.bits.storeData
       rob(i).branchTaken := writeback.bits.branchTaken
       rob(i).branchTarget := writeback.bits.branchTarget
+      writebackPc := rob(i).pc
     }
   }
 
+  branchFlush := writeback.valid && writeback.bits.isControl && writeback.bits.branchTaken
+
   when(writeback.valid && writeback.bits.isControl) {
-    when(writeback.bits.branchTaken) {
+    when(branchFlush) {
       val keepMask = Wire(Vec(config.robDepth, Bool()))
+      val restoredTags = Wire(Vec(32, UInt(32.W)))
+      for (i <- 0 until 32) {
+        restoredTags(i) := noTag
+      }
       for (i <- 0 until config.robDepth) {
         val slot = (robHead + i.U) % config.robDepth.U
         keepMask(i) := rob(slot).valid && rob(slot).tag <= writeback.bits.tag
+        when(keepMask(i) && rob(slot).writesRd) {
+          restoredTags(rob(slot).rd) := rob(slot).tag
+        }
         when(!keepMask(i)) {
           rob(slot).valid := false.B
         }
       }
       flushKeepCount := PopCount(keepMask)
       robTail := (branchSlot + 1.U) % config.robDepth.U
-      fetchPc := writeback.bits.branchTarget
+      fetchPc := Mux(writeback.bits.branchTaken, writeback.bits.branchTarget, writebackPc + 4.U)
       fetchReadPtr := fetchWritePtr
       fetchCount := 0.U
       for (i <- 0 until config.fetchQueueDepth) {
@@ -416,10 +445,11 @@ class CpuCore(val config: CoreConfig = CoreConfig()) extends Module {
       }
       fetchPending := false.B
       fetchBarrier := false.B
-      waitingForControl := false.B
+      for (i <- 0 until 32) {
+        producerTags(i) := restoredTags(i)
+      }
     }.otherwise {
       fetchBarrier := false.B
-      waitingForControl := false.B
     }
   }
 

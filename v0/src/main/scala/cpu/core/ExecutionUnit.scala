@@ -51,12 +51,15 @@ class ExecutionUnit(val config: CoreConfig) extends Module {
   val state = RegInit(State.idle)
   val request = Reg(new ExecutionRequest)
   val loadAddr = Reg(UInt(32.W))
+  val pendingValid = RegInit(false.B)
+  val pendingWriteback = Reg(new ExecutionWriteback)
 
   io.issue.ready := state === State.idle
-  io.writeback.valid := false.B
-  io.writeback.bits := 0.U.asTypeOf(new ExecutionWriteback)
+  io.writeback.valid := pendingValid
+  io.writeback.bits := pendingWriteback
   io.cacheReq.valid := state === State.cacheRequest
   io.cacheReq.bits.addr := loadAddr
+  pendingValid := false.B
 
   def isLoad(op: OpType.Type): Bool =
     op === OpType.lb || op === OpType.lbu || op === OpType.lh ||
@@ -172,24 +175,22 @@ class ExecutionUnit(val config: CoreConfig) extends Module {
   when(io.issue.fire) {
     request := io.issue.bits
     loadAddr := io.issue.bits.rs1 + io.issue.bits.imm.asUInt
-    state := Mux(isLoad(io.issue.bits.op), State.cacheRequest, State.execute)
+    when(isLoad(io.issue.bits.op)) {
+      state := State.cacheRequest
+    }
   }
 
-  when(state === State.execute) {
-    val req = request
-    val isStoreReq = req.isStore
-    val isControlReq = isControl(req.op)
-    val taken = branchTaken(req)
-    io.writeback.valid := true.B
-    io.writeback.bits.tag := req.tag
-    io.writeback.bits.value := aluResult(req)
-    io.writeback.bits.storeAddr := req.rs1 + req.imm.asUInt
-    io.writeback.bits.storeData := req.rs2
-    io.writeback.bits.isStore := isStoreReq
-    io.writeback.bits.isControl := isControlReq
-    io.writeback.bits.branchTaken := taken
-    io.writeback.bits.branchTarget := controlTarget(req)
-    state := State.idle
+  when(io.issue.fire && !isLoad(io.issue.bits.op)) {
+    val req = io.issue.bits
+    pendingValid := true.B
+    pendingWriteback.tag := req.tag
+    pendingWriteback.value := aluResult(req)
+    pendingWriteback.storeAddr := req.rs1 + req.imm.asUInt
+    pendingWriteback.storeData := req.rs2
+    pendingWriteback.isStore := req.isStore
+    pendingWriteback.isControl := isControl(req.op)
+    pendingWriteback.branchTaken := branchTaken(req)
+    pendingWriteback.branchTarget := controlTarget(req)
   }
 
   when(state === State.cacheRequest && io.cacheReq.ready) {
@@ -197,15 +198,15 @@ class ExecutionUnit(val config: CoreConfig) extends Module {
   }
 
   when(state === State.cacheWait && io.cacheResp.valid) {
-    io.writeback.valid := true.B
-    io.writeback.bits.tag := request.tag
-    io.writeback.bits.value := loadValue(request.op, loadAddr, io.cacheResp.bits.data)
-    io.writeback.bits.isStore := false.B
-    io.writeback.bits.isControl := false.B
-    io.writeback.bits.branchTaken := false.B
-    io.writeback.bits.branchTarget := 0.U
-    io.writeback.bits.storeAddr := 0.U
-    io.writeback.bits.storeData := 0.U
+    pendingValid := true.B
+    pendingWriteback.tag := request.tag
+    pendingWriteback.value := loadValue(request.op, loadAddr, io.cacheResp.bits.data)
+    pendingWriteback.isStore := false.B
+    pendingWriteback.isControl := false.B
+    pendingWriteback.branchTaken := false.B
+    pendingWriteback.branchTarget := 0.U
+    pendingWriteback.storeAddr := 0.U
+    pendingWriteback.storeData := 0.U
     state := State.idle
   }
 }
