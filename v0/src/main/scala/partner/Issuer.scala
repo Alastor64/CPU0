@@ -117,7 +117,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                 prods((i+1)*32+j):=prods(i*32+j)
             }
             for (j<-0 until ALU_NUM+2){
-                spaces((i+1)*(ALU_NUM+2)+j):=space(i*(ALU_NUM+2)+j)
+                spaces((i+1)*(ALU_NUM+2)+j):=spaces(i*(ALU_NUM+2)+j)
             }
             should_break(i+1):=should_break(i)
             out_num(i+1):=out_num(i)
