@@ -67,7 +67,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val Icache_out_num = Wire(UInt(32.W))
 
     regs(0).value:=0.U(32.W)
-    regs(0).prod:=-1.S(32.W)
+    regs(0).prod := -1.S(32.W)
     val opcode=Wire(SInt(32.W))
 
     val Icache=Seq.tabulate(issueWidth) { i =>Module(new Cache(4))}//Icache(i) manages start addr mod 16 = 4i
@@ -177,7 +177,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             lsu.io.clear_id:=flush_val
             for (i<-0 until 32){
                 when (regs(i).prod>flush_val){
-                    regs(i).prod:=-1.S(32.W)
+                    regs(i).prod := -1.S(32.W)
                 }
             }
             committer.io.clear_valid:=true.B
