@@ -7,6 +7,9 @@
 //> using options -Xfatal-warnings -Ywarn-unused
 package Adder32
 import chisel3._
+import chiseltest._
+import chiseltest.RawTester.test
+import _root_.circt.stage.ChiselStage
 class Adder32 extends Module {
   val io = IO(new Bundle {
     val a  = Input(UInt(32.W))
