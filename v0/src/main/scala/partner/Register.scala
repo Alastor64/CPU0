@@ -10,7 +10,7 @@ package Register
 import chisel3._
 import chisel3.util._
 
-class RS extends Bundle{
+class Register extends Bundle{
     val value = UInt(32.W)
     val prod = SInt(32.W)//initialized to -1
 }

@@ -9,6 +9,7 @@
 package Committer
 
 import Config._
+import Config.CPUConfig._
 import ROB._
 import CDB._
 import chisel3._
@@ -48,7 +49,6 @@ class Committer extends Module{//needs to add branch predictor!
   })
   val l = RegInit(0.U(4.W))
   val r = RegInit(0.U(4.W))
-  val robs = Reg(Vec(ROBWidth, new ROB))
   val cur_rb = Reg(new ROB)
   val init = Wire(new ROB)
   init.id := 0.U
@@ -79,12 +79,12 @@ class Committer extends Module{//needs to add branch predictor!
       {
         when (j.U<(r-l)&&robs(l+j.U).id===io.cdbs(i).id&&robs(l+j.U).ready===false.B)
         {
-            when (cdbs(i).dest=/=(-2).S)//-2 is for branch operations, -1 is for halt
+            when (io.cdbs(i).dest=/=(-2).S)//-2 is for branch operations, -1 is for halt
             {
-                robs(l+j.U).dest:=cdbs(i).dest
-                robs(l+j.U).value:=cdbs(i).value
+                robs(l+j.U).dest:=io.cdbs(i).dest
+                robs(l+j.U).value:=io.cdbs(i).value
             }.otherwise{
-                robs(l+j.U).value:=robs(l+j.U).value+robs(l+j.U).value+cdbs(i).value
+                robs(l+j.U).value:=robs(l+j.U).value+robs(l+j.U).value+io.cdbs(i).value
             }
             robs(l+j.U).ready:=true.B
         }
@@ -93,7 +93,7 @@ class Committer extends Module{//needs to add branch predictor!
     for (i<-0 until issueWidth)//receiving ROBs
     {
       when (i.U<io.valid_num){
-        robs(r+i.U):=in_robs(i)
+        robs(r+i.U):=io.in_robs(i)
       }
     }
     r:=r+io.valid_num
@@ -107,7 +107,7 @@ class Committer extends Module{//needs to add branch predictor!
                 io.out_store_valid:=true.B
                 io.out_store_addr:=rb.dest
                 io.out_store_value:=rb.value
-                io.out_store_mask:=MUX(rb.type_ === 1.S, 1.U, MUX(rb.type_ === 2.S, 3.U, 15.U))
+                io.out_store_mask:=Mux(rb.type_ === 1.S, 1.U, Mux(rb.type_ === 2.S, 3.U, 15.U))
                 cur_rb:=rb
                 waiting:=1.U
             }.elsewhen (rb.type_ === 0.S)//alu
@@ -130,17 +130,17 @@ class Committer extends Module{//needs to add branch predictor!
                 }
                 io.out_predictor_valid := true.B
                 io.out_predictor_addr := ~(rb.type_.asUInt)
-                io.out_predictor_value :=  rb.value
+                io.out_predictor_res :=  rb.value
             }
         }
     }.otherwise{
         when (io.store_received===true.B){
-            waiting=false.B
+            waiting := false.B
         }.otherwise{
             io.out_store_valid:=true.B
             io.out_store_addr:=cur_rb.dest
             io.out_store_value:=cur_rb.value
-            io.out_store_mask:=MUX(cur_rb.type_ === 1.S, 1.U, MUX(cur_rb.type_ === 2.S, 3.U, 15.U))
+            io.out_store_mask:=Mux(cur_rb.type_ === 1.S, 1.U, Mux(cur_rb.type_ === 2.S, 3.U, 15.U))
         }
     }
   }

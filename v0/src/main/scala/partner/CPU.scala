@@ -8,10 +8,12 @@
 
 package CPU
 import Config._
+import Config.CPUConfig._
 import Op._
 import CDB._
 import RS._
 import ROB._
+import Register._
 import Cache._
 import Decoder._
 import Executer._
@@ -72,8 +74,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val Dcache=Module(new Cache(2))
     val committer=Module(new Committer)
     val alus = Seq.tabulate(ALU_NUM) { i =>Module(new ALU(i))}
-    val lsu=Module(new Executer)
-    val bru=Module(new Executer)
+    val lsu=Module(new LSU)
+    val bru=Module(new BRU)
     val mult  = Module(new Mult)
     val div  = Module(new Divider)
     val issuer = Module(new Issuer)
@@ -86,10 +88,10 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     io.wvalid:=false.B
     io.bready:=true.B
 
-    halt:=halt|commiter.io.out_halt
+    halt:=halt|committer.io.out_halt
     flush:=committer.io.out_flush
     flush_val:=committer.io.out_flushval
-    newaddr:=committerio.out_newaddr
+    newaddr:=committer.io.out_newaddr
     
     clk:=clk+1.U(32.W)
     
@@ -139,7 +141,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 Dcache_waiting:=1.U
             }
         }.elsewhen(Dcache_waiting===1.U){
-            when (io.wready:=true.B&&io.awready:=true.B)
+            when (io.wready===true.B&&io.awready===true.B)
             {
                 Dcache_waiting:=2.U
             }.otherwise
@@ -151,7 +153,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 io.awvalid:=true.B
             }
         }.otherwise{
-            when (io.bvalid:=true.B)
+            when (io.bvalid===true.B)
             {
                 Dcache.io.store_received:=true.B
                 Dcache_waiting:=0.U
@@ -165,14 +167,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             for (i<-0 until ALU_NUM)
             {
                 alus(i).io.clear_valid:=true.B
-                alus(i).io.clear_val=flush_val
+                alus(i).io.clear_id:=flush_val
             }
             mult.io.clear_valid:=true.B
             div.io.clear_valid:=true.B
             bru.io.clear_valid:=true.B
-            bru.io.clear_val=flush_val
+            bru.io.clear_id:=flush_val
             lsu.io.clear_valid:=true.B
-            lsu.io.clear_val=flush_val
+            lsu.io.clear_id:=flush_val
             for (i<-0 until 32){
                 when (regs(i).prod>flush_val){
                     regs(i).prod:=-1.S(32.W)
@@ -249,7 +251,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 //predictor
                 predictor.io.qaddrs:= decoder.io.out_id
                 //handling issuer input
-                issuer.io.valid_num:=decoder.out_num
+                issuer.io.valid_num:=decoder.io.out_num
                 issuer.io.id:=decoder.io.out_id
                 issuer.io.cur_op:=decoder.io.out_op
                 issuer.io.predictor_result := predictor.io.out
@@ -280,7 +282,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }
                     when (i.U<num){
                         val tp= Wire(UInt(32.W))
-                        tp := issuer.io.out_executer_RS(i)
+                        tp := issuer.io.out_executer_type(i)
                         when (tp<ALU_NUM.U){
                             for (j<-0 until ALU_NUM)//indexing workaround 
                             {
@@ -288,7 +290,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                                     alus(j).io.rs(cnts(i*(ALU_NUM+2)+j)):=issuer.io.out_executer_RS(i)
                                 }
                             }
-                        }.elsewhen(tp==ALU_NUM.U){
+                        }.elsewhen(tp===ALU_NUM.U){
                             lsu.io.rs(cnts(i*(ALU_NUM+2)+ALU_NUM)):=issuer.io.out_executer_RS(i)
                         }.otherwise{
                             bru.io.rs(cnts(i*(ALU_NUM+2)+ALU_NUM+1)):=issuer.io.out_executer_RS(i)
@@ -303,7 +305,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 bru.io.valid_num:=cnts(issueWidth*(ALU_NUM+2)+ALU_NUM+1)
                 //committer input
                 committer.io.valid_num:=num
-                committer.io.in_robs:= issuer.io.out_rob
+                committer.io.in_robs:= issuer.io.out_ROB
 
                 //updating register prods
                 for (i<-0 until 32){
@@ -417,7 +419,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }
                     lsu.io.cdbs(i):=RegNext(alus(i).io.out_cdb)
                     bru.io.cdbs(i):=RegNext(alus(i).io.out_cdb)
-                    commiter.io.cdbs(i):=RegNext(alus(i).io.out_cdb)
+                    committer.io.cdbs(i):=RegNext(alus(i).io.out_cdb)
                 }
                 for (j<-0 until ALU_NUM)
                 {
@@ -425,14 +427,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 }
                 lsu.io.cdbs(ALU_NUM):=RegNext(lsu.io.out_cdb)
                 bru.io.cdbs(ALU_NUM):=RegNext(lsu.io.out_cdb)
-                commiter.io.cdbs(ALU_NUM):=RegNext(lsu.io.out_cdb)
+                committer.io.cdbs(ALU_NUM):=RegNext(lsu.io.out_cdb)
                 for (j<-0 until ALU_NUM)
                 {
                     alus(j).io.cdbs(ALU_NUM+1):=RegNext(bru.io.out_cdb)
                 }
                 lsu.io.cdbs(ALU_NUM+1):=RegNext(bru.io.out_cdb)
                 bru.io.cdbs(ALU_NUM+1):=RegNext(bru.io.out_cdb)
-                commiter.io.cdbs(i):=RegNext(bru.io.out_cdb)
+                committer.io.cdbs(ALU_NUM+1):=RegNext(bru.io.out_cdb)
 
                 //committer
                 committer.io.store_received:=false.B
@@ -445,10 +447,10 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         committer_waiting:=1.U
                     }.elsewhen (committer.io.out_reg_valid===true.B)
                     {
-                        val id=Wire(Uint(5.W))
+                        val id=Wire(UInt(5.W))
                         id:=committer.io.out_reg_valid
                         regs(id).value := committer.io.out_reg_val
-                        when (regs(id).prod.asUInt === commiter.io.out_reg_prod&&issuer.io.out_prod_valid(id)===false.B){//not modified by issuer
+                        when (regs(id).prod.asUInt === committer.io.out_reg_prod&&issuer.io.out_prod_valid(id)===false.B){//not modified by issuer
                             regs(id).prod := (-1).S
                         }
                     }

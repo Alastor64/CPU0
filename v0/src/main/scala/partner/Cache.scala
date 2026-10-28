@@ -9,6 +9,7 @@
 package Cache
 import cpu2026._
 import Config._
+import Config.CPUConfig._
 
 import chisel3._
 import chisel3.util._
@@ -75,8 +76,8 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
 
     write_data:=false.B
     missed:=false.B
-    set_idx := io.raddr(setBIT+offsetBIT-1,offsetBIT)
-    tag := io.raddr(31,setBIT+offsetBIT)
+    set_idx := io.addr(setBIT+offsetBIT-1,offsetBIT)
+    tag := io.addr(31,setBIT+offsetBIT)
 
     when (waiting===0.U||(waiting===1.U&&io.clear_status===true.B))
     {
@@ -91,15 +92,15 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
         {
             flag:=0.U//0 for invalid
             missed:=true.B
-            val threshold_age = Wire(UInt(2.U))
+            val threshold_age = Wire(UInt(2.W))
             for (i<-0 until lineNum){
                 when (tagRams(i).rdata === needTag){//cache hit, need to update age
                     io.out_hit:=true.B
                     flag:=(i+1).U
                     missed:=false.B
                     io.out_rdata:=dataRams(i).rdata
-                    threshold_age:=age((i*SETSIZE).U+lstIdx)
-                    age((i*SETSIZE).U+lstIdx):=0.U
+                    threshold_age:=age((i*setSIZE).U+lstIdx)
+                    age((i*setSIZE).U+lstIdx):=0.U
                 }
                 tags(i):=tagRams(i).rdata
                 datas(i):=dataRams(i).rdata
@@ -107,9 +108,9 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
             when (missed===false.B){//update age
                 for (i<-0 until lineNum)
                 {
-                    when (age((i*SETSIZE).U+lstIdx)<threshold_age)
+                    when (age((i*setSIZE).U+lstIdx)<threshold_age)
                     {
-                       age((i*SETSIZE).U+lstIdx):=age((i*SETSIZE).U+lstIdx)+1.U
+                       age((i*setSIZE).U+lstIdx):=age((i*setSIZE).U+lstIdx)+1.U
                     }
                 }
             }
@@ -122,7 +123,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                 {
                     when ((i+1).U===flag)
                     {
-                        dataRems(i).clk:=clock
+                        dataRams(i).clk:=clock
                         dataRams(i).en:=true.B
                         dataRams(i).we:=true.B//write
                         dataRams(i).addr:=lstIdx
@@ -180,11 +181,11 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     {
         val chosen = Wire(UInt(2.W))
         for (i<-(lineNum-1) to 0 by -1){
-            when (valid((i*SETSIZE).U+lstIdx)===false.B){
+            when (valid((i*setSIZE).U+lstIdx)===false.B){
                 chosen:=i.U
-            }.elsewhen (age((i*SETSIZE).U+lstIdx)===(lineNum-1).U){//maxage,need to be replaced
+            }.elsewhen (age((i*setSIZE).U+lstIdx)===(lineNum-1).U){//maxage,need to be replaced
                 chosen:=i.U
-                when (dirty((i*SETSIZE).U+lstIdx)===true.B){
+                when (dirty((i*setSIZE).U+lstIdx)===true.B){
                     io.out_wvalid:=true.B
                     when (missed===true.B)//missed in the current cycle
                     {
@@ -193,10 +194,10 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                         io.out_wdata:=dataRams(i).rdata
                         pre_wdata:=dataRams(i).rdata
                     }.otherwise{
-                        io.out_waddr:=(Cat(tags(i).rdata,lstIdx)<<offsetBIT.U)
-                        pre_waddr:=(Cat(tags(i).rdata,lstIdx)<<offsetBIT.U)
-                        io.out_wdata:=datas(i).rdata
-                        pre_wdata:=datas(i).rdata
+                        io.out_waddr:=(Cat(tags(i),lstIdx)<<offsetBIT.U)
+                        pre_waddr:=(Cat(tags(i),lstIdx)<<offsetBIT.U)
+                        io.out_wdata:=datas(i)
+                        pre_wdata:=datas(i)
                     }
                     waiting:=2.U
                 }
@@ -213,7 +214,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                 tagRams(i).wdata:=needTag
                 tagRams(i).wmask:=1.U
 
-                dataRems(i).clk:=clock
+                dataRams(i).clk:=clock
                 dataRams(i).en:=true.B
                 dataRams(i).we:=true.B
                 dataRams(i).addr:=lstIdx

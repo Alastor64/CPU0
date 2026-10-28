@@ -7,10 +7,11 @@
 //> using options -Xfatal-warnings -Ywarn-unused
 
 package Issuer
-import Reg._
+import Register._
 import CDB._
 import Op._
 import Config._
+import Config.CPUConfig._
 import chisel3._
 import Config.CPUConfig.issuerBufferWidth
 import Config.CPUConfig.issueWidth
@@ -23,13 +24,13 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     val executer_space = Input(Vec(ALU_NUM+2,UInt(32.W)))
     val committer_space = Input(UInt(32.W))
 
-    val reg= Input(Vec(32,new Reg))
+    val reg= Input(Vec(32,new Register))
     val robs = Input(Vec(ROBWidth,new ROB))
 
     val predictor_result = Input(Vec(issueWidth,UInt(32.W)))
 
     val out_executer_RS = Output(Vec(issueWidth,new RS))
-    val out_executer_type = Output(Vec(issueWidth, UINt(32.W)))//0 for nothing, 1-ALU_NUM for alus, ALU_NUM+1 for LSU, ALU_NUM+2 for BRU
+    val out_executer_type = Output(Vec(issueWidth, UInt(32.W)))//0 for nothing, 1-ALU_NUM for alus, ALU_NUM+1 for LSU, ALU_NUM+2 for BRU
     val out_ROB = Output(Vec(issueWidth,new ROB))
     val out_prod = Output(Vec(32,SInt(32.W)))
     val out_prod_valid = Output(Vec(32,Bool()))
@@ -52,7 +53,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   val r=RegInit(0.U(4.W))
   val startALU=RegInit(0.U(2.W))//the first alu to select
   val frozen = RegInit(false.B)//frozen means the issuer is waiting for the right pc_val
-  io.out_pc_val_changed:=flase.B
+  io.out_pc_val_changed:=false.B
 
   //add into buffer
   when ((l-r-1.U) < io.valid_num){//buffer full
@@ -180,7 +181,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                         is(OP_TYPE.OP_ADD, OP_TYPE.OP_SUB, OP_TYPE.OP_AND, OP_TYPE.OP_OR, OP_TYPE.OP_XOR,
                         OP_TYPE.OP_SLL, OP_TYPE.OP_SRL, OP_TYPE.OP_SRA, OP_TYPE.OP_SLT,OP_TYPE.OP_SLTU,
                         OP_TYPE.OP_MUL,OP_TYPE.OP_MULH,OP_TYPE.OP_MULHSU,OP_TYPE.OP_MULHU,OP_TYPE.OP_DIV,OP_TYPE.OP_DIVU,OP_TYPE.OP_REM,OP_TYPE.OP_REMU){
-                            when (alu_id:=ALU_NUM.U){//full alu
+                            when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
                                 when (prods((i*32).U+r1)===-1.S(32.W)){
@@ -212,7 +213,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                         }
                         is(OP_TYPE.OP_ADDI, OP_TYPE.OP_ANDI, OP_TYPE.OP_ORI, OP_TYPE.OP_XORI, OP_TYPE.OP_SLLI,
                         OP_TYPE.OP_SRLI, OP_TYPE.OP_SRAI, OP_TYPE.OP_SLTI,OP_TYPE.OP_SLTUI){
-                            when (alu_id:=ALU_NUM.U){//full alu
+                            when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
                                 when (prods((i*32).U+r1)===-1.S(32.W)){
@@ -236,7 +237,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }
                         }
                         is(OP_TYPE.OP_LB, OP_TYPE.OP_LH, OP_TYPE.OP_LHU, OP_TYPE.OP_LW){
-                            when (spaces(i*(ALU_NUM+2)+ALU_NUM)===executer_space(ALU_NUM)){
+                            when (spaces(i*(ALU_NUM+2)+ALU_NUM)===io.executer_space(ALU_NUM)){
                                 halt:=1.U
                             }.otherwise{
                                 when (prods((i*32).U+r1)===-1.S(32.W)){
@@ -259,7 +260,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }
                         }
                         is(OP_TYPE.OP_SB, OP_TYPE.OP_SH, OP_TYPE.OP_SW){
-                            when (spaces(i*(ALU_NUM+2)+ALU_NUM)===executer_space(ALU_NUM)){
+                            when (spaces(i*(ALU_NUM+2)+ALU_NUM)===io.executer_space(ALU_NUM)){
                                 halt:=1.U
                             }.otherwise{
                                 when (prods((i*32).U+r1)===-1.S(32.W)){
@@ -283,12 +284,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 rs.dest:=rd
                                 executer_type:=ALU_NUM.U//lsu
                                 rob.id:=clk+i.U
-                                rob.type_ := MUX(rs.type_ === OP_TYPE.OP_SB,1.U,MUX(rs.type_ === OP_TYPE.OP_SH,2,4))
+                                rob.type_ := Mux(rs.type_ === OP_TYPE.OP_SB,1.S,Mux(rs.type_ === OP_TYPE.OP_SH,2.S,4.S))
                                 out_pc_val(i+1):=out_pc_val(i)+4.U
                             }
                         }
                         is(OP_TYPE.OP_BEQ, OP_TYPE.OP_BGE, OP_TYPE.OP_BGEU,OP_TYPE.OP_BLT, OP_TYPE.OP_BLTU, OP_TYPE.OP_BNE){
-                            when (spaces(i*(ALU_NUM+2)+ALU_NUM+1)===executer_space(ALU_NUM+1)){//bru_full
+                            when (spaces(i*(ALU_NUM+2)+ALU_NUM+1)===io.executer_space(ALU_NUM+1)){//bru_full
                                 halt:=1.U
                             }.otherwise{
                                 when (prods((i*32).U+r1)===-1.S(32.W)){
@@ -312,15 +313,15 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 rs.dest:=io.predictor_result(i)(0)
                                 executer_type:=(ALU_NUM+1).U//bru
                                 rob.id:=clk+i.U
-                                rob.dest:=MUX(rs.dest=/=0.U(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd(12, 0).asSInt).asUInt)
+                                rob.dest:=Mux(rs.dest=/=0.U(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd(12, 0).asSInt).asUInt)
                                 rob.type_ := (~id_buffer(startingPoint+i.U)).asSInt
                                 rob.value:=io.predictor_result(i)
-                                out_pc_val(i+1):=MUX(rs.dest=/=0.U(32.W),(out_pc_val(i).asSInt+rd(12,0).asSInt).asUInt,out_pc_val(i)+4.U)
+                                out_pc_val(i+1):=Mux(rs.dest=/=0.U(32.W),(out_pc_val(i).asSInt+rd(12,0).asSInt).asUInt,out_pc_val(i)+4.U)
                                 halt:=2.U
                             }
                         }
                         is(OP_TYPE.JAL){
-                            when (alu_id:=ALU_NUM.U){//full alu
+                            when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
@@ -335,7 +336,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }
                         }
                         is(OP_TYPE.JALR){
-                            when (alu_id:=ALU_NUM.U||(rd=/=r1&&prods((i*32).U+r1)=/=(-1).S&&has_temp1===false.B)){//full alu or not clear rs1
+                            when (alu_id===ALU_NUM.U||(rd=/=r1&&prods((i*32).U+r1)=/=(-1).S&&has_temp1===false.B)){//full alu or not clear rs1
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
@@ -350,16 +351,16 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                     out_pc_val(i+1):=(out_pc_val(i).asSInt+4.S+r2(11,0).asSInt).asUInt
                                 }.elsewhen (prods((i*32).U+r1)===-1.S(32.W))
                                 {
-                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+reg(r1).value.asSInt+r2(11,0).asSInt-id_buffer(startingPoint+i.U).asSInt).asUInte
+                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+reg(r1).value.asSInt+r2(11,0).asSInt-id_buffer(startingPoint+i.U).asSInt).asUInt
                                 }.otherwise
                                 {
-                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+temp1.asSInt+r2(11,0).asSInt-id_buffer(startingPoint+i.U).asSInt).asUInte
+                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+temp1.asSInt+r2(11,0).asSInt-id_buffer(startingPoint+i.U).asSInt).asUInt
                                 }
                                 halt:=2.U
                             }
                         }
                         is(OP_TYPE.AUIPC){
-                            when (alu_id:=ALU_NUM.U){//full alu
+                            when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+r1
@@ -373,7 +374,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }
                         }
                         is(OP_TYPE.LUI){
-                            when (alu_id:=ALU_NUM.U){//full alu
+                            when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=r1

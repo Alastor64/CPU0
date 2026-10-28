@@ -12,6 +12,7 @@ import Op._
 import RS._
 import CDB._
 import Config._
+import Config.CPUConfig._
 import chisel3._
 import Config.CPUConfig.issueWidth
 

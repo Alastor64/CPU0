@@ -9,6 +9,7 @@
 package Decoder
 import Op._
 import Config._
+import Config.CPUConfig._
 import chisel3._
 import chisel3.util._
 import Config.CPUConfig.issueWidth
@@ -25,7 +26,7 @@ class Decoder extends Module{
     })
     //init
     val valid_num_reg=RegInit(0.U(32.W))
-    val opcode_reg=Reg(Vec(issuewidth,UInt(32.W)))
+    val opcode_reg=Reg(Vec(issueWidth,UInt(32.W)))
     //decode
     valid_num_reg:=io.valid_num
     io.out_num:=valid_num_reg
