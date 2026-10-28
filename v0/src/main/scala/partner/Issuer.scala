@@ -10,9 +10,12 @@ package Issuer
 import Register._
 import CDB._
 import Op._
+import ROB._
+import RS._
 import Config._
 import Config.CPUConfig._
 import chisel3._
+import chisel3.util._
 import Config.CPUConfig.issuerBufferWidth
 import Config.CPUConfig.issueWidth
 
