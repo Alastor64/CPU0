@@ -85,7 +85,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     spaces(j):=0.U
   }
   for (j<-0 until 32){
-    prods(j):=io.reg_vals(j).prod
+    prods(j):=io.reg(j).prod
     io.out_prod_valid(j):=false.B
   }
 //multi issuing
