@@ -139,7 +139,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     rs.q1:= (-1).S
                     rs.q2:= (-1).S
                     rs.dest:= (-1).S
-                    rs.is_halt=false.B
+                    rs.is_halt := false.B
                     rob.id:=0.U
                     rob.value:= 0.U
                     rob.dest:= 0.S
