@@ -311,7 +311,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 for (i<-0 until 32){
                     regs(i).prod:=issuer.io.out_prod(i)
                 }
-                when (issuer.io.out_pc_changed===true.B)
+                when (issuer.io.out_pc_val_changed===true.B)
                 {
                     new_pc_val:= issuer.io.out_new_pc_val
                     fetcher_waiting:=0.U
