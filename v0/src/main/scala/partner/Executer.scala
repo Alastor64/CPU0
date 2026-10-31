@@ -476,12 +476,6 @@ class ALU(val id: Int) extends Executer {
         res:=(temp_rs.v1.asSInt>>(temp_rs.v2(4,0))).asUInt
       }
       is (OP_TYPE.OP_SLT){
-        res:=(temp_rs.v1.asSInt>>(temp_rs.v2(4,0))).asUInt
-      }
-      is (OP_TYPE.OP_SRA){
-        res:=(temp_rs.v1.asSInt>>(temp_rs.v2(4,0))).asUInt
-      }
-      is (OP_TYPE.OP_SLT){
         res:=Mux(temp_rs.v1.asSInt<temp_rs.v2.asSInt,1.U,0.U)
       }
       is (OP_TYPE.OP_SLTU){
@@ -500,13 +494,13 @@ class ALU(val id: Int) extends Executer {
         res:=temp_rs.v1 ^ Cat(Fill(20, temp_rs.v2(11)), temp_rs.v2(11,0))
       }
       is (OP_TYPE.OP_SLLI){
-        res:=(temp_rs.v1<<temp_rs.v2)(31,0)
+        res:=(temp_rs.v1<<temp_rs.v2(4,0))(31,0)
       }
       is (OP_TYPE.OP_SRLI){
-        res:=temp_rs.v1>>temp_rs.v2
+        res:=temp_rs.v1>>temp_rs.v2(4,0)
       }
       is (OP_TYPE.OP_SRAI){
-        res:=(temp_rs.v1.asSInt>>temp_rs.v2).asUInt
+        res:=(temp_rs.v1.asSInt>>temp_rs.v2(4,0)).asUInt
       }
       is (OP_TYPE.OP_SLTI){
         res:=Mux(temp_rs.v1.asSInt<temp_rs.v2(11,0).asSInt,1.U,0.U)
@@ -563,8 +557,8 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_div_valid, temp_out_div_valid).foreach { out => out := true.B}
       }
       is (OP_TYPE.OP_DIV){
-        when (temp_rs.v1===0x80000000.U&&temp_rs.v2===0xFFFFFFFF.U){
-          res:=0x80000000.U
+        when (temp_rs.v1==="h80000000".U&&temp_rs.v2==="hffffffff".U){
+          res:="h80000000".U
         }.otherwise{
           sgn:=temp_rs.v1(31)^temp_rs.v2(31)
           waiting:=true.B
@@ -585,7 +579,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_div_valid, temp_out_div_valid).foreach { out => out := true.B}
       }
       is (OP_TYPE.OP_REM){
-        when (temp_rs.v1===0x80000000.U&&temp_rs.v2===0xFFFFFFFF.U){//special case
+        when (temp_rs.v1==="h80000000".U&&temp_rs.v2==="hffffffff".U){//special case
           res:=0.U
         }.otherwise{
           sgn:=temp_rs.v1(31)

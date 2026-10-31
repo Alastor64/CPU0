@@ -46,6 +46,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     val dirty = RegInit(VecInit(Seq.fill(n)(false.B)))
     val age = RegInit(VecInit(Seq.fill(n)(0.U(2.W))))//age=0,1,2,3
 
+    val tagBIT=32-setBIT-offsetBIT
     val needTag = Reg(UInt(tagBIT.W))
     val lstLoad = RegInit(false.B)
     val lstStore = RegInit(false.B)
@@ -59,7 +60,6 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     val pre_waddr = Reg(UInt(32.W))
     val pre_wdata = Reg(UInt(32.W))
 
-    val tagBIT=32-setBIT-offsetBIT
     val tagRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, tagBIT, tagBIT)))
     val dataRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, 32, 8)))
     for (i<-0 until lineNum){

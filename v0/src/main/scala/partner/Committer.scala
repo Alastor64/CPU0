@@ -105,7 +105,7 @@ class Committer extends Module{//needs to add branch predictor!
             when (rb.type_ > 0.S)//store
             {
                 io.out_store_valid:=true.B
-                io.out_store_addr:=rb.dest
+                io.out_store_addr:=rb.dest.asUInt
                 io.out_store_value:=rb.value
                 io.out_store_mask:=Mux(rb.type_ === 1.S, 1.U, Mux(rb.type_ === 2.S, 3.U, 15.U))
                 cur_rb:=rb
@@ -138,7 +138,7 @@ class Committer extends Module{//needs to add branch predictor!
             waiting := false.B
         }.otherwise{
             io.out_store_valid:=true.B
-            io.out_store_addr:=cur_rb.dest
+            io.out_store_addr:=cur_rb.dest.asUInt
             io.out_store_value:=cur_rb.value
             io.out_store_mask:=Mux(cur_rb.type_ === 1.S, 1.U, Mux(cur_rb.type_ === 2.S, 3.U, 15.U))
         }
