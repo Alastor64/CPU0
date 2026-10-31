@@ -444,7 +444,7 @@ class ALU(val id: Int) extends Executer {
         {
           io.out_cdb.id:=cur_rs.id
           io.out_cdb.dest:=cur_rs.dest
-          io.out_cdb.value:=Mux(sgn,~io.div_res+1.U,io.div_res)
+          io.out_cdb.value:=Mux(sgn,~aluIO.div_res+1.U,aluIO.div_res)
           in_process:=false.B
         }
     }
@@ -511,13 +511,13 @@ class ALU(val id: Int) extends Executer {
       is (OP_TYPE.OP_SLTI){
         res:=Mux(temp_rs.v1.asSInt<temp_rs.v2(11,0).asSInt,1.U,0.U)
       }
-      is (OP_TYPE.OP_SLTUI){
+      is (OP_TYPE.OP_SLTIU){
         res:=Mux(temp_rs.v1<Cat(Fill(20, temp_rs.v2(11)), temp_rs.v2(11,0)).asUInt,1.U,0.U)
       }
       is (OP_TYPE.OP_JAL,OP_TYPE.OP_JALR,OP_TYPE.OP_AUIPC,OP_TYPE.OP_LUI){
         res:=temp_rs.v1
       }
-      is (OP_TYPE.MUL){
+      is (OP_TYPE.OP_MUL){
         sgn:=false.B
         waiting:=true.B
         isMulDiv:=true.B
@@ -526,7 +526,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_mult_op, temp_out_mult_op).foreach { out => out := false.B}
         Seq(aluIO.out_mult_valid, temp_out_mult_valid).foreach { out => out := true.B}
       }
-      is (OP_TYPE.MULHU){
+      is (OP_TYPE.OP_MULHU){
         sgn:=false.B
         waiting:=true.B
         isMulDiv:=true.B
@@ -535,7 +535,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_mult_op, temp_out_mult_op).foreach { out => out := true.B}
         Seq(aluIO.out_mult_valid, temp_out_mult_valid).foreach { out => out := true.B}
       }
-      is (OP_TYPE.MULH){
+      is (OP_TYPE.OP_MULH){
         sgn:=temp_rs.v1(31)^temp_rs.v2(31)
         waiting:=true.B
         isMulDiv:=true.B
@@ -544,7 +544,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_mult_op, temp_out_mult_op).foreach { out => out := true.B}
         Seq(aluIO.out_mult_valid, temp_out_mult_valid).foreach { out => out := true.B}
       }
-      is (OP_TYPE.MULHSU){
+      is (OP_TYPE.OP_MULHSU){
         sgn:=temp_rs.v1(31)
         waiting:=true.B
         isMulDiv:=true.B
@@ -553,7 +553,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_mult_op, temp_out_mult_op).foreach { out => out := true.B}
         Seq(aluIO.out_mult_valid, temp_out_mult_valid).foreach { out => out := true.B}
       }
-      is (OP_TYPE.DIVU){
+      is (OP_TYPE.OP_DIVU){
         sgn:=false.B
         waiting:=true.B
         isMulDiv:=true.B
@@ -562,7 +562,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_div_op, temp_out_div_op).foreach { out => out := true.B}
         Seq(aluIO.out_div_valid, temp_out_div_valid).foreach { out => out := true.B}
       }
-      is (OP_TYPE.DIV){
+      is (OP_TYPE.OP_DIV){
         when (temp_rs.v1===0x80000000.U&&temp_rs.v2===0xFFFFFFFF.U){
           res:=0x80000000.U
         }.otherwise{
@@ -575,7 +575,7 @@ class ALU(val id: Int) extends Executer {
           Seq(aluIO.out_div_valid, temp_out_div_valid).foreach { out => out := true.B}
         }
       }
-      is (OP_TYPE.REMU){
+      is (OP_TYPE.OP_REMU){
         sgn:=false.B
         waiting:=true.B
         isMulDiv:=true.B
@@ -584,7 +584,7 @@ class ALU(val id: Int) extends Executer {
         Seq(aluIO.out_div_op, temp_out_div_op).foreach { out => out := false.B}
         Seq(aluIO.out_div_valid, temp_out_div_valid).foreach { out => out := true.B}
       }
-      is (OP_TYPE.REM){
+      is (OP_TYPE.OP_REM){
         when (temp_rs.v1===0x80000000.U&&temp_rs.v2===0xFFFFFFFF.U){//special case
           res:=0.U
         }.otherwise{
