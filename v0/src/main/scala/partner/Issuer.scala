@@ -156,9 +156,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     val executer_type=Wire(UInt(32.W))
                     has_temp1:=false.B
                     has_temp2:=false.B
-                    rd:=io.op_buffer(l+i.U).rd
-                    r1:=io.op_buffer(l+i.U).r1
-                    r2:=io.op_buffer(l+i.U).r2
+                    rd:=io.cur_op(l+i.U).rd
+                    r1:=io.cur_op(l+i.U).r1
+                    r2:=io.cur_op(l+i.U).r2
                     for (j<-0 until ROBWidth){
                         when (io.robs(j).ready===true.B&&io.robs(j).id===prods((i*32).U+r1)){
                             temp1:=io.robs(j).value
