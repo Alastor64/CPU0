@@ -748,22 +748,22 @@ class BRU extends Executer{
     when (start_process===true.B){
       switch (temp_rs.type_){
         is (OP_TYPE.OP_BEQ){
-          res:=(temp_rs.v1===temp_rs.v2)^temp_rs.dest
+          res:=(temp_rs.v1===temp_rs.v2)^temp_rs.dest(0).asBool
         }
         is (OP_TYPE.OP_BGE){
-          res:=(temp_rs.v1.asSInt>=temp_rs.v2.asSInt)^temp_rs.dest
+          res:=(temp_rs.v1.asSInt>=temp_rs.v2.asSInt)^temp_rs.dest(0).asBool
         }
         is (OP_TYPE.OP_BGEU){
-          res:=(temp_rs.v1>=temp_rs.v2)^temp_rs.dest
+          res:=(temp_rs.v1>=temp_rs.v2)^temp_rs.dest(0).asBool
         }
         is (OP_TYPE.OP_BLT){
-          res:=(temp_rs.v1.asSInt<temp_rs.v2.asSInt)^temp_rs.dest
+          res:=(temp_rs.v1.asSInt<temp_rs.v2.asSInt)^temp_rs.dest(0).asBool
         }
         is (OP_TYPE.OP_BLTU){
-          res:=(temp_rs.v1<temp_rs.v2)^temp_rs.dest
+          res:=(temp_rs.v1<temp_rs.v2)^temp_rs.dest(0).asBool
         }
         is (OP_TYPE.OP_BNE){
-          res:=(temp_rs.v1=/=temp_rs.v2)^temp_rs.dest
+          res:=(temp_rs.v1=/=temp_rs.v2)^temp_rs.dest(0).asBool
         }
       }
       io.out_cdb.id:=temp_rs.id

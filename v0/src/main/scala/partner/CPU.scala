@@ -295,7 +295,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         }.otherwise{
                             bru.io.rs(cnts(i*(ALU_NUM+2)+ALU_NUM+1)):=issuer.io.out_executer_RS(i)
                         }
-                        cnts(((i+1)*(ALU_NUM+2)).U+tp):=cnts(i*(ALU_NUM+2).U+tp)+1.U
+                        cnts(((i+1)*(ALU_NUM+2)).U+tp):=cnts(i.U*(ALU_NUM+2).U+tp)+1.U
                     }
                 }
                 for (i<-0 until ALU_NUM){
@@ -350,16 +350,16 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     mult_used(i+1):=mult_used(i)
                     div_used(i+1):=div_used(i)
                     when (alus(i).aluIO.out_mult_valid===true.B&&mult_used(i)===false.B){
-                        mult.io.a:=alus(i).out_mult_a
-                        mult.io.b:=alus(i).out_mult_b
-                        mult.io.op:=alus(i).out_mult_op
+                        mult.io.a:=alus(i).aluIO.out_mult_a
+                        mult.io.b:=alus(i).aluIO.out_mult_b
+                        mult.io.op:=alus(i).aluIO.out_mult_op
                         mult.io.valid:=(i+1).U
                         mult_used(i+1):=true.B
                     }
                     when (alus(i).aluIO.out_div_valid===true.B&&div_used(i)===false.B){
-                        div.io.a:=alus(i).out_div_a
-                        div.io.b:=alus(i).out_div_b
-                        div.io.op:=alus(i).out_div_op
+                        div.io.a:=alus(i).aluIO.out_div_a
+                        div.io.b:=alus(i).aluIO.out_div_b
+                        div.io.op:=alus(i).aluIO.out_div_op
                         div.io.valid:=(i+1).U
                         div_used(i+1):=true.B
                     }
@@ -367,9 +367,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
                 //lsu
                 lsu.lsuIO.addr_valid:=false.B
-                lsu.lsuIO.l:=committer.out_l
-                lsu.lsuIO.r:=committer.out_r
-                lsu.lsuIO.robs:=committer.out_robs
+                lsu.lsuIO.l:=committer.io.out_l
+                lsu.lsuIO.r:=committer.io.out_r
+                lsu.lsuIO.robs:=committer.io.out_robs
                 when (lsu_waiting===0.U){
                     when (lsu.lsuIO.out_valid===true.B&&Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B&&committer_waiting===0.U&&committer.io.out_store_valid===false.B){//can load only when no store
                         Dcache.io.load_valid:=true.B

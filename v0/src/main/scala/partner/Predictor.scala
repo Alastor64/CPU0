@@ -14,6 +14,7 @@ import CDB._
 import Config._
 import Config.CPUConfig._
 import chisel3._
+import chisel3.util._
 import Config.CPUConfig.issueWidth
 
 class Predictor extends Module {//0 cycle
@@ -41,18 +42,18 @@ class Predictor extends Module {//0 cycle
     val different_result = Wire(Bool())
     val localhistory = Wire(UInt(KBIT.W))
 
-    subaddr := io.qaddr(i)(PBIT+1,2)
+    subaddr := io.qaddrs(i)(PBIT+1,2)
     localhistory := LHT(subaddr)
     gshare_res := Gshare_status(subaddr^history)>=2.U
     pht_res := PHT(Cat(subaddr,localhistory))>=2.U
-    used:= score(subaddr)>=2
+    used:= score(subaddr)>=2.U
     different_result := (gshare_res=/=pht_res)
     res := Mux(used,gshare_res,pht_res)
     io.out(i) := Cat(localhistory,history,different_result,used,res)
   }
 
 //update
-    when (uvalid===true.B){
+    when (io.uvalid===true.B){
         val _subaddr = Wire(UInt(PBIT.W))
         val _localhistory = Wire(UInt(KBIT.W))
         val globalhistory = Wire(UInt(PBIT.W))
@@ -60,7 +61,7 @@ class Predictor extends Module {//0 cycle
         val taken = Wire(Bool())
         val _used = Wire(Bool())
         val _different_result = Wire(Bool())
-        _subaddr := uaddr(PBIT+1,2)
+        _subaddr := io.uaddr(PBIT+1,2)
         _localhistory := ures(PBIT+KBIT+3,PBIT+4)
         globalhistory := ures(PBIT+3,4)
         reverted := ures(0)
