@@ -7,6 +7,8 @@
 //> using options -Xfatal-warnings -Ywarn-unused
 
 import chisel3._
+import chiseltest._
+import chiseltest.RawTester.test
 
 class RegNextModule extends Module {
   val io = IO(new Bundle {

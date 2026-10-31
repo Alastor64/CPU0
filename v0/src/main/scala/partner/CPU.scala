@@ -78,7 +78,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val bru=Module(new BRU)
     val mult  = Module(new Mult)
     val div  = Module(new Divider)
-    val issuer = Module(new Issuer)
+    val issuer = Module(new _root_.Issuer.Issuer)
     val decoder = Module(new Decoder)
     val predictor = Module(new Predictor)
 

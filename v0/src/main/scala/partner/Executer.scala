@@ -366,7 +366,7 @@ class Executer extends Module{
             temp_rs:=rs
             cur_rs:=rs
             for (j<-0 until i){
-              rss(l+(j+1).U):=rss(i+j.U)
+              rss(l+(j+1).U):=rss((i+j).U)
             }
             l:=l+1.U
             start_process:=true.B

@@ -62,24 +62,24 @@ class Predictor extends Module {//0 cycle
         val _used = Wire(Bool())
         val _different_result = Wire(Bool())
         _subaddr := io.uaddr(PBIT+1,2)
-        _localhistory := ures(PBIT+KBIT+3,PBIT+4)
-        globalhistory := ures(PBIT+3,4)
-        reverted := ures(0)
-        taken := ures(1)
-        _used := ures(2)
-        different_result := ures(3)
+        _localhistory := io.ures(PBIT+KBIT+3,PBIT+4)
+        globalhistory := io.ures(PBIT+3,4)
+        reverted := io.ures(0)
+        taken := io.ures(1)
+        _used := io.ures(2)
+        _different_result := io.ures(3)
         when (reverted===true.B){
-            when(different_result===true.B){
-                score(_subaddr):=Mux(used,Mux(score(_subaddr)===0.U,0.U,score(_subaddr)-1.U),Mux(score(_subaddr)===3.U,3.U,score(_subaddr)+1.U))
+            when(_different_result===true.B){
+                score(_subaddr):=Mux(_used,Mux(score(_subaddr)===0.U,0.U,score(_subaddr)-1.U),Mux(score(_subaddr)===3.U,3.U,score(_subaddr)+1.U))
             }
         }.otherwise{
-            when(different_result===true.B){
-                score(_subaddr):=Mux(used,Mux(score(_subaddr)===3.U,3.U,score(_subaddr)+1.U),Mux(score(_subaddr)===0.U,0.U,score(_subaddr)-1.U))
+            when(_different_result===true.B){
+                score(_subaddr):=Mux(_used,Mux(score(_subaddr)===3.U,3.U,score(_subaddr)+1.U),Mux(score(_subaddr)===0.U,0.U,score(_subaddr)-1.U))
             }
         }
         val tkrev = Wire(Bool())
         tkrev := taken^reverted
-        val temp = Wire(UInt(PBit.W))
+        val temp = Wire(UInt(PBIT.W))
         temp := Gshare_status(_subaddr^globalhistory)
         Gshare_status(_subaddr^globalhistory) := Mux(tkrev,Mux(temp===3.U,3.U,temp+1.U),Mux(temp===0.U,0.U,temp-1.U))
         val temp2=Wire(UInt(KBIT.W))
