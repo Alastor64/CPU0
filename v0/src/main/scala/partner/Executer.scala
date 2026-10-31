@@ -10,6 +10,7 @@ package Executer
 import Op._
 import RS._
 import CDB._
+import ROB._
 import Config._
 import Config.CPUConfig._
 import chisel3._
@@ -250,7 +251,7 @@ class Divider extends Module{//unsigned
         Q(i):=Cat(Q(i-1)(30,0),Mux(subs(i).io.c(31),false.B,true.B))
        }
     }
-    when (clear_valid===true.B){
+    when (io.clear_valid===true.B){
         received:=0.U
         for (i<-0 until 32){
           rd(i):=0.U
@@ -293,9 +294,9 @@ class Executer extends Module{
   //find new instruction to execute
   when (io.clear_valid===true.B){//flush
     val newr=Wire(UInt(32.W))
-    newr:=l.U
+    newr:=l
     for (i<-0 until RSWidth){
-      when (i.U<(r-l)&&rss(l+i.U).id<=io.clear_id){
+      when (i.U<(r-l)&&rss(l+i.U).id.asSInt<=io.clear_id){
           newr:=l+(i+1).U
       }
     }
@@ -307,12 +308,12 @@ class Executer extends Module{
       {
         when (j.U<(r-l))
         {
-            when (rss(l+j.U).q1==io.cdbs(i).id)
+            when (rss(l+j.U).q1===io.cdbs(i).id.asSInt)
             {
                 rss(l+j.U).q1:=(-1).S
                 rss(l+j.U).v1:=io.cdbs(i).value
             }
-            when (rss(l+j.U).q2==io.cdbs(i).id)
+            when (rss(l+j.U).q2===io.cdbs(i).id.asSInt)
             {
                 rss(l+j.U).q2:=(-1).S
                 rss(l+j.U).v2:=io.cdbs(i).value
@@ -322,7 +323,7 @@ class Executer extends Module{
     }
     for (i<-0 until issueWidth){//receiving RS
       when (i.U<io.valid_num){
-        rss(r+i.U):=rs(i)
+        rss(r+i.U):=io.rs(i)
       }
     }
     r:=r+io.valid_num
@@ -332,7 +333,7 @@ class Executer extends Module{
       for (i<-0 until RSWidth)
       {
         selected(i+1):=selected(i)
-        when (i.U<(r-l)&&rss(l+i.U).q1===-1.S&&rss(l+i.U).q2===-1.S)
+        when (i.U<(r-l)&&rss(l+i.U).q1=== -1.S&&rss(l+i.U).q2=== -1.S)
         {
           val len=Wire(UInt(32.W))
           val rs=Wire(new RS)
@@ -340,7 +341,7 @@ class Executer extends Module{
           val R1=Wire(UInt(32.W))
           val flag=Wire(Bool())
           rs:=rss(l+i.U)
-          len:=Mux(rs.type_ === OP_TYPE.OP_LW,4.U(32.W),Mux(rs.type_ === OP_TYPE.LH||rs.type_ === OP_TYPE.LHU, 2.U(32.W),Mux(rs.type_ === OP_TYPE.LB||rs.type_ === OP_TYPE.LBU,1.U(32.W),0.U(32.W))))
+          len:=Mux(rs.type_ === OP_TYPE.OP_LW,4.U(32.W),Mux(rs.type_ === OP_TYPE.OP_LH||rs.type_ === OP_TYPE.OP_LHU, 2.U(32.W),Mux(rs.type_ === OP_TYPE.OP_LB||rs.type_ === OP_TYPE.OP_LBU,1.U(32.W),0.U(32.W))))
           L1:=(rs.v1.asSInt+rs.v2(11,0).asSInt).asUInt
           R1:=L1+len
           flag:=false.B

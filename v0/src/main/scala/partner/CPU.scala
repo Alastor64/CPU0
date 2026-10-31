@@ -226,7 +226,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         io.araddr:=pc.value
                         io.arvalid:=true.B
                     }
-                }.elsewhen(fetcher_waiting==2.U){
+                }.elsewhen(fetcher_waiting===2.U){
                     when (io.rvalid===true.B){
                         fetcher_waiting:=0.U
                         fetcher_next:=0.U
