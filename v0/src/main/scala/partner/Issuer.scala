@@ -22,6 +22,7 @@ import Config.CPUConfig.issueWidth
 class Issuer extends Module{//needs to rewrite alu choosing!
   val io = IO(new Bundle {
     val valid_num = Input(UInt(32.W))
+    val flush_valid = Input(Bool())
     val id = Input(Vec(issueWidth,UInt(32.W)))
     val cur_op = Input(Vec(issueWidth,new Op))
     val executer_space = Input(Vec(ALU_NUM+2,UInt(32.W)))
@@ -43,7 +44,6 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   })
   //the buffer queue
   val clk=RegInit(1.U(32.W))
-  val nex_want=RegInit(0.U(32.W))
   clk:=clk+issueWidth.U(32.W)
   val op_buffer=Reg(Vec(issuerBufferWidth, new Op))
   val id_buffer=Reg(Vec(issuerBufferWidth,UInt(32.W)))
@@ -51,12 +51,11 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   val spaces=Wire(Vec((ALU_NUM+2)*(issueWidth+1),UInt(32.W)))
   val should_break=Wire(Vec(issueWidth+1,Bool()))
   val out_num=Wire(Vec(issueWidth+1,UInt(32.W)))
-  val out_pc_val=Wire(Vec(issueWidth+1,UInt(32.W)))
   val l=RegInit(0.U(4.W))
   val r=RegInit(0.U(4.W))
   val startALU=RegInit(0.U(2.W))//the first alu to select
-  val frozen = RegInit(false.B)//frozen means the issuer is waiting for the right pc_val
   io.out_pc_val_changed:=false.B
+  io.out_new_pc_val:=0.U
 
   //add into buffer
   when ((l-r-1.U) < io.valid_num){//buffer full
@@ -78,7 +77,6 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   }
 
 
-  out_pc_val(0):=nex_want
   should_break(0):=false.B
   out_num(0):=0.U(32.W)
   for (j<-0 until ALU_NUM+2){
@@ -91,25 +89,8 @@ class Issuer extends Module{//needs to rewrite alu choosing!
 //multi issuing
  val canOperate = Wire(Bool())
  val startingPoint = Wire(UInt(4.W))
- val found = Wire(Bool())
  startingPoint:=l
  canOperate := true.B
- found:=false.B
-  when (frozen===true.B)
-  {
-    for (i<-0 until issueWidth){
-        when (i.U<(l-r-1.U)&&id_buffer(l+i.U)===nex_want){
-            startingPoint:=l+i.U
-            found:=true.B
-        }
-    }
-    when (found===true.B){
-        frozen:=false.B
-    }.otherwise{
-        canOperate:=false.B
-        l:=r
-    }
-  }
   when (canOperate===true.B)
   {
     for (i<-0 until issueWidth){
@@ -121,15 +102,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
             }
             should_break(i+1):=should_break(i)
             out_num(i+1):=out_num(i)
-            out_pc_val(i+1):=out_pc_val(i)
             when (should_break(i)===false.B &&i.U < (startingPoint-r-1.U)&&i.U<io.committer_space){
-                when (id_buffer(startingPoint+i.U)=/=out_pc_val(i))//needs to change pc val
-                {
-                    io.out_pc_val_changed:=true.B
-                    frozen:=true.B
-                    should_break(i+1):=true.B
-                }.otherwise
-                {
                     val halt=Wire(UInt(2.W))//0 ok, 1 no space halt, 2 jump triggered
                     halt:=0.U
                     val rs=Wire(new RS)
@@ -205,13 +178,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                         rs.q2:=prods((i*32).U+r2)
                                     }
                                 }
-                                rs.dest:=rd
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                rs.dest:=rd.asSInt
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
-                                out_pc_val(i+1):=out_pc_val(i)+4.U
+                                rob.dest:=rd.asSInt
                             }
                         }
                         is(OP_TYPE.OP_ADDI, OP_TYPE.OP_ANDI, OP_TYPE.OP_ORI, OP_TYPE.OP_XORI, OP_TYPE.OP_SLLI,
@@ -229,14 +201,13 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                     }
                                 }
                                 rs.v2:=r2
-                                rs.dest:=rd
+                                rs.dest:=rd.asSInt
                                 rs.is_halt:=(rs.type_ ===OP_TYPE.OP_ADDI&&r1===0.U&&r2===255.U&&rd===10.U)//halt instruction
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
-                                out_pc_val(i+1):=out_pc_val(i)+4.U
+                                rob.dest:=rd.asSInt
                             }
                         }
                         is(OP_TYPE.OP_LB, OP_TYPE.OP_LH, OP_TYPE.OP_LHU, OP_TYPE.OP_LW){
@@ -253,13 +224,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                     }
                                 }
                                 rs.v2:=r2
-                                rs.dest:=rd
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                rs.dest:=rd.asSInt
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=ALU_NUM.U//lsu
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
-                                out_pc_val(i+1):=out_pc_val(i)+4.U
+                                rob.dest:=rd.asSInt
                             }
                         }
                         is(OP_TYPE.OP_SB, OP_TYPE.OP_SH, OP_TYPE.OP_SW){
@@ -284,11 +254,10 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                         rs.q2:=prods((i*32).U+r2)
                                     }
                                 }
-                                rs.dest:=rd
+                                rs.dest:=rd.asSInt
                                 executer_type:=ALU_NUM.U//lsu
                                 rob.id:=clk+i.U
                                 rob.type_ := Mux(rs.type_ === OP_TYPE.OP_SB,1.S,Mux(rs.type_ === OP_TYPE.OP_SH,2.S,4.S))
-                                out_pc_val(i+1):=out_pc_val(i)+4.U
                             }
                         }
                         is(OP_TYPE.OP_BEQ, OP_TYPE.OP_BGE, OP_TYPE.OP_BGEU,OP_TYPE.OP_BLT, OP_TYPE.OP_BLTU, OP_TYPE.OP_BNE){
@@ -313,13 +282,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                         rs.q2:=prods((i*32).U+r2)
                                     }
                                 }
-                                rs.dest:=io.predictor_result(i)(0)
+                                rs.dest:=io.predictor_result(i)(0).asSInt
                                 executer_type:=(ALU_NUM+1).U//bru
                                 rob.id:=clk+i.U
-                                rob.dest:=Mux(rs.dest=/=0.S(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd(12, 0).asSInt).asUInt)
+                                rob.dest:=Mux(rs.dest=/=0.S(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd(12, 0).asSInt).asUInt).asSInt
                                 rob.type_ := (~id_buffer(startingPoint+i.U)).asSInt
                                 rob.value:=io.predictor_result(i)
-                                out_pc_val(i+1):=Mux(rs.dest=/=0.S(32.W),(out_pc_val(i).asSInt+rd(12,0).asSInt).asUInt,out_pc_val(i)+4.U)
                                 halt:=2.U
                             }
                         }
@@ -328,37 +296,39 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
-                                rs.dest:=rd
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                rs.dest:=rd.asSInt
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
-                                out_pc_val(i+1):=(out_pc_val(i).asSInt+r1(20,0).asSInt).asUInt
+                                rob.dest:=rd.asSInt
                                 halt:=2.U
                             }
                         }
                         is(OP_TYPE.OP_JALR){
+                            // JALR 的目标依赖 rs1，无法在取指阶段确定，
+                            // 因此由 Issue 在操作数就绪后发起一次重定向。
                             when (alu_id===ALU_NUM.U||(rd=/=r1&&prods((i*32).U+r1)=/=(-1).S&&has_temp1===false.B)){//full alu or not clear rs1
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
-                                rs.dest:=rd
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                rs.dest:=rd.asSInt
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
+                                rob.dest:=rd.asSInt
                                 when (rd===r1)
                                 {
-                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+4.S+r2(11,0).asSInt).asUInt
+                                    io.out_new_pc_val:=(id_buffer(startingPoint+i.U).asSInt+4.S+r2(11,0).asSInt).asUInt
                                 }.elsewhen (prods((i*32).U+r1)=== -1.S(32.W))
                                 {
-                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+io.reg(r1).value.asSInt+r2(11,0).asSInt-id_buffer(startingPoint+i.U).asSInt).asUInt
+                                    io.out_new_pc_val:=(io.reg(r1).value.asSInt+r2(11,0).asSInt).asUInt
                                 }.otherwise
                                 {
-                                    out_pc_val(i+1):=(out_pc_val(i).asSInt+temp1.asSInt+r2(11,0).asSInt-id_buffer(startingPoint+i.U).asSInt).asUInt
+                                    io.out_new_pc_val:=(temp1.asSInt+r2(11,0).asSInt).asUInt
                                 }
+                                io.out_pc_val_changed:=true.B
                                 halt:=2.U
                             }
                         }
@@ -367,13 +337,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+r1
-                                rs.dest:=rd
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                rs.dest:=rd.asSInt
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
-                                out_pc_val(i+1):=out_pc_val(i)+4.U
+                                rob.dest:=rd.asSInt
                             }
                         }
                         is(OP_TYPE.OP_LUI){
@@ -381,13 +350,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=r1
-                                rs.dest:=rd
-                                prods(((i+1)*32).U+rd):=clk+i.U
+                                rs.dest:=rd.asSInt
+                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
-                                rob.dest:=rd
-                                out_pc_val(i+1):=out_pc_val(i)+4.U
+                                rob.dest:=rd.asSInt
                             }
                         }
                     }
@@ -401,16 +369,18 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     when (halt=/=0.U){
                         should_break(i+1):=true.B
                     }
-                }
             }
         }
         //output and update
         io.out_valid:=out_num(issueWidth)
         l:=startingPoint+out_num(issueWidth)
-        io.out_new_pc_val:=out_pc_val(issueWidth)
-        nex_want:=out_pc_val(issueWidth)
         for (i<-0 until 32){
             io.out_prod(i):=prods(32*issueWidth+i)
         }
     }
+  // Commit 侧只负责丢弃预测错误路径；下一取指 PC 由 Fetcher 管理。
+  when (io.flush_valid===true.B){
+    l:=0.U
+    r:=0.U
+  }
 }

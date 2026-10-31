@@ -90,7 +90,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
     halt:=halt|committer.io.out_halt
     flush:=committer.io.out_flush
-    flush_val:=committer.io.out_flushval
+    flush_val:=committer.io.out_flushval.asSInt
     newaddr:=committer.io.out_newaddr
     
     clk:=clk+1.U(32.W)
@@ -112,6 +112,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         Icache(i).io.store_received:=false.B
         Icache(i).io.clear_status:=false.B
     }
+    issuer.io.flush_valid:=false.B
     Dcache.io.load_valid:=false.B
     Dcache.io.store_valid:=false.B
     Dcache.io.new_valid:=false.B
@@ -121,7 +122,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
     val fetcher_waiting = RegInit(0.U(2.W))//0: initial state; 1: set arvalid=true&araddr, waiting for arready; 2: received arready=true, set rready=true, waiting for rvalid; when received rvalid, return to 0
     val hits = Wire(Vec(issueWidth+1,UInt(3.W)))
-    val fetcher_next = Wire(0.U(2.W))
+    val fetcher_next = Wire(UInt(2.W))
     val lsu_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for memory, 3 got memory, storing into Dcache
     val lsu_lst_addr=Reg(UInt(32.W))
     val committer_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for Dcache write back
@@ -162,7 +163,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
 
         when (flush===true.B){//flush
-            issuer.io.nex_want:=newaddr
+            issuer.io.flush_valid:=true.B
+            issuer.io.valid_num:=0.U
             pc.value:=newaddr
             for (i<-0 until ALU_NUM)
             {
@@ -250,6 +252,51 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
                 //predictor
                 predictor.io.qaddrs:= decoder.io.out_id
+                //Decide the next fetch PC in the fetch stage. Issuer only
+                //continues through the queued instructions and no longer owns
+                //the predicted PC.
+                val control_slots = VecInit((0 until issueWidth).map { i =>
+                    val op = decoder.io.out_op(i).type_
+                    op === OP_TYPE.OP_BEQ || op === OP_TYPE.OP_BGE ||
+                        op === OP_TYPE.OP_BGEU || op === OP_TYPE.OP_BLT ||
+                        op === OP_TYPE.OP_BLTU || op === OP_TYPE.OP_BNE ||
+                        op === OP_TYPE.OP_JAL || op === OP_TYPE.OP_JALR
+                })
+                val predicted_redirect = Wire(Bool())
+                val predicted_pc = Wire(UInt(32.W))
+                predicted_redirect := false.B
+                predicted_pc := 0.U
+                //Search backwards so the first control instruction in program
+                //order wins, matching the original issue terminology.
+                for (i<-issueWidth-1 to 0 by -1){
+                    val op = decoder.io.out_op(i).type_
+                    val is_branch = op === OP_TYPE.OP_BEQ || op === OP_TYPE.OP_BGE ||
+                        op === OP_TYPE.OP_BGEU || op === OP_TYPE.OP_BLT ||
+                        op === OP_TYPE.OP_BLTU || op === OP_TYPE.OP_BNE
+                    val is_jal = op === OP_TYPE.OP_JAL
+                    val prior_control =
+                        if (i == 0) false.B else VecInit(control_slots.take(i)).asUInt.orR
+                    val target = Mux(
+                        is_branch,
+                        (decoder.io.out_id(i).asSInt +
+                            decoder.io.out_op(i).rd(12, 0).asSInt).asUInt,
+                        (decoder.io.out_id(i).asSInt +
+                            decoder.io.out_op(i).r1(20, 0).asSInt).asUInt
+                    )
+                    when (i.U < decoder.io.out_num && !prior_control &&
+                        (is_jal || (is_branch && predictor.io.out(i)(0).asBool))) {
+                        predicted_redirect := true.B
+                        predicted_pc := target
+                    }
+                }
+                when (predicted_redirect) {
+                    new_pc_val := predicted_pc
+                    fetcher_waiting := 0.U
+                    fetcher_next := 0.U
+                    for (i<-0 until issueWidth){
+                        Icache(i).io.clear_status := true.B
+                    }
+                }
                 //handling issuer input
                 issuer.io.valid_num:=decoder.io.out_num
                 issuer.io.id:=decoder.io.out_id
@@ -477,7 +524,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
         }
     }.otherwise{//halt
-        io.awaddr:=0x80000000.U(32.W)
+        io.awaddr:="h80000000".U(32.W)
         io.wstrb:=15.U(4.W)
         io.wdata:=regs(10).value(7,0)
         io.wvalid:=true.B
