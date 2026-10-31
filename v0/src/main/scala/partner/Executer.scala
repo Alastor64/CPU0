@@ -159,10 +159,10 @@ class Mult extends Module{
     val aH=io.a(31,16)
     val bL=io.b(15,0)
     val bH=io.b(31,16)
-    val p00 = RegNext(aLo * bLo)
-    val p01 = RegNext(aLo * bHi)
-    val p10 = RegNext(aHi * bLo)
-    val p11 = RegNext(aHi * bHi)
+    val p00 = RegNext(aL * bL)
+    val p01 = RegNext(aL * bH)
+    val p10 = RegNext(aH * bL)
+    val p11 = RegNext(aH * bH)
     val adder1=Module(new Adder)
     val adder2=Module(new Adder)
     val adder3=Module(new Adder)
@@ -355,7 +355,7 @@ class Executer extends Module{
               tp := Mux(temp_rs.type_ === OP_TYPE.OP_SB,1.U(32.W),Mux(temp_rs.type_ === OP_TYPE.OP_SH, 2.U(32.W),Mux(temp_rs.type_ === OP_TYPE.OP_SW,4.U(32.W),0.U(32.W))))
               L2:=(temp_rs.v1.asSInt+temp_rs.dest(11,0).asSInt).asUInt
               R2:=L2+tp
-              when(tp=/=0.U&&(temp_rs.q1!=-1.S||(L2<R1&&L1<R2))){
+              when(tp=/=0.U&&(temp_rs.q1 =/= -1.S||(L2<R1&&L1<R2))){
                 flag:=true.B
               }
             }
@@ -417,11 +417,11 @@ class ALU(val id: Int) extends Executer {
   when (io.clear_valid===true.B){
     waiting:=false.B
   }.otherwise{
-  when (in_process==true.B)
+  when (in_process===true.B)
   {
       when (waiting===true.B)
       {
-        when (aluIO.mult_received===(i+1).U||aluIO.div_received===(i+1).U){
+        when (aluIO.mult_received===(id+1).U||aluIO.div_received===(id+1).U){
             waiting:=false.B
           }.otherwise{//keep sending
             aluIO.out_mult_a:=temp_out_mult_a
@@ -434,13 +434,13 @@ class ALU(val id: Int) extends Executer {
             aluIO.out_div_valid:=temp_out_div_valid
           }
       }.otherwise{//other operations
-        when (io.mult_valid==(id+1).U)
+        when (aluIO.mult_valid===(id+1).U)
         {
           io.out_cdb.id:=cur_rs.id
           io.out_cdb.dest:=cur_rs.dest
-          io.out_cdb.value:=Mux(sgn,~io.mult_res+1.U,io.mult_res)
+          io.out_cdb.value:=Mux(sgn,~aluIO.mult_res+1.U,aluIO.mult_res)
           in_process:=false.B
-        }.elsewhen (io.div_valid==(id+1).U)
+        }.elsewhen (aluIO.div_valid===(id+1).U)
         {
           io.out_cdb.id:=cur_rs.id
           io.out_cdb.dest:=cur_rs.dest
