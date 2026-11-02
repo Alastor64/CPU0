@@ -45,10 +45,16 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     io.out_wvalid := false.B
     io.out_waddr := 0.U
     io.out_wdata := 0.U
-    val n = setSIZE * lineNum
-    val valid = RegInit(VecInit(Seq.fill(n)(false.B)))
-    val dirty = RegInit(VecInit(Seq.fill(n)(false.B)))
-    val age = RegInit(VecInit(Seq.fill(n)(0.U(2.W))))//age=0,1,2,3
+    // Metadata is organized by way and then set, matching the cache lookup.
+    val valid = RegInit(
+        VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(false.B))))
+    )
+    val dirty = RegInit(
+        VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(false.B))))
+    )
+    val age = RegInit(
+        VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(0.U(2.W)))))
+    )//age=0,1,2,3
 
     val tagBIT=32-setBIT-offsetBIT
     val needTag = Reg(UInt(tagBIT.W))
@@ -69,12 +75,6 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     io.out_wvalid := writeback_valid
     io.out_waddr := pre_waddr
     io.out_wdata := pre_wdata
-
-    // Flat indices for the lane-major valid/dirty/age arrays. The explicit
-    // width prevents a dynamic set index from truncating a 128*4-entry array.
-    val lineIndexBits = math.max(1, log2Ceil(n))
-    def lineIndex(lane: Int, set: UInt): UInt =
-      ((lane * setSIZE).U(lineIndexBits.W) + set)(lineIndexBits - 1, 0)
 
     val tagRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, tagBIT, tagBIT)))
     val dataRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, 32, 8)))
@@ -123,13 +123,13 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
             missed:=true.B
                     val threshold_age = WireDefault(0.U(2.W))
             for (i<-0 until lineNum){
-                when (valid(lineIndex(i,lstIdx)) && tagRams(i).rdata === needTag){//cache hit, need to update age
+                when (valid(i)(lstIdx) && tagRams(i).rdata === needTag){//cache hit, need to update age
                     io.out_hit:=true.B
                     flag:=(i+1).U
                     missed:=false.B
                     io.out_rdata:=dataRams(i).rdata
-                    threshold_age:=age(lineIndex(i,lstIdx))
-                    age(lineIndex(i,lstIdx)):=0.U
+                    threshold_age:=age(i)(lstIdx)
+                    age(i)(lstIdx):=0.U
                 }
                 tags(i):=tagRams(i).rdata
                 datas(i):=dataRams(i).rdata
@@ -137,9 +137,9 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
             when (missed===false.B){//update age
                 for (i<-0 until lineNum)
                 {
-                    when (age(lineIndex(i,lstIdx))<threshold_age)
+                    when (age(i)(lstIdx)<threshold_age)
                     {
-                       age(lineIndex(i,lstIdx)):=age(lineIndex(i,lstIdx))+1.U
+                       age(i)(lstIdx):=age(i)(lstIdx)+1.U
                     }
                 }
             }
@@ -158,7 +158,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                         dataRams(i).addr:=lstIdx
                         dataRams(i).wdata:=lstData
                         dataRams(i).wmask:=lstMask
-                        dirty((i*setSIZE).U+lstIdx):=true.B
+                        dirty(i)(lstIdx):=true.B
                     }
                 }
             }.elsewhen ((io.load_valid|io.store_valid)===true.B)
@@ -207,11 +207,11 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     {
         val chosen = WireDefault(0.U(2.W))
         for (i<-(lineNum-1) to 0 by -1){
-            when (valid((i*setSIZE).U+lstIdx)===false.B){
+            when (valid(i)(lstIdx)===false.B){
                 chosen:=i.U
-            }.elsewhen (age((i*setSIZE).U+lstIdx)===(lineNum-1).U){//maxage,need to be replaced
+            }.elsewhen (age(i)(lstIdx)===(lineNum-1).U){//maxage,need to be replaced
                 chosen:=i.U
-                when (dirty((i*setSIZE).U+lstIdx)===true.B){
+                when (dirty(i)(lstIdx)===true.B){
                     writeback_valid:=true.B
                     when (missed===true.B)//missed in the current cycle
                     {
@@ -243,11 +243,11 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                 dataRams(i).wdata:=data
                 dataRams(i).wmask:=lstMask
 
-                valid((i*setSIZE).U+lstIdx):=true.B
-                dirty((i*setSIZE).U+lstIdx):=isdirty
-                age((i*setSIZE).U+lstIdx):=0.U
+                valid(i)(lstIdx):=true.B
+                dirty(i)(lstIdx):=isdirty
+                age(i)(lstIdx):=0.U
             }.otherwise{
-                age((i*setSIZE).U+lstIdx):=age((i*setSIZE).U+lstIdx)+1.U
+                age(i)(lstIdx):=age(i)(lstIdx)+1.U
             }
         }
     }
