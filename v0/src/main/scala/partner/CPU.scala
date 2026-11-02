@@ -48,7 +48,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         val bvalid  = Input(Bool())
         val bready  = Output(Bool())
 
-        val flush_valid = Input(Bool())
     })
     val init = Wire(new Register())
     init.value := 0.U(32.W)
