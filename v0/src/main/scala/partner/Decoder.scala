@@ -27,6 +27,10 @@ class Decoder extends Module{
     //init
     val valid_num_reg=RegInit(0.U(32.W))
     val opcode_reg=Reg(Vec(issueWidth,UInt(32.W)))
+    // Recreate the complete I-type immediate. Op.r2 is UInt(32.W), while the
+    // execution units consume its low 12 bits as a signed immediate.
+    def immediateI(instruction: UInt): UInt =
+        Cat(Fill(20, instruction(31)), instruction(31,20))
     //decode
     valid_num_reg:=io.valid_num//wait for a cycle
     io.out_num:=valid_num_reg
@@ -108,7 +112,7 @@ class Decoder extends Module{
             is("b0010011".U){//I(*)
                 io.out_op(i).rd:=opcode_reg(i)(11,7)
                 io.out_op(i).r1:=opcode_reg(i)(19,15)
-                io.out_op(i).r2:=opcode_reg(i)(24,20)
+                io.out_op(i).r2:=immediateI(opcode_reg(i))
                 switch(opcode_reg(i)(14,12)){
                     is ("b000".U){
                         io.out_op(i).type_ := OP_TYPE.OP_ADDI
@@ -139,7 +143,7 @@ class Decoder extends Module{
             is("b0000011".U){//I memory
                 io.out_op(i).rd:=opcode_reg(i)(11,7)
                 io.out_op(i).r1:=opcode_reg(i)(19,15)
-                io.out_op(i).r2:=opcode_reg(i)(24,20)
+                io.out_op(i).r2:=immediateI(opcode_reg(i))
                 switch(opcode_reg(i)(14,12)){
                     is ("b000".U){
                         io.out_op(i).type_ := OP_TYPE.OP_LB
@@ -208,7 +212,7 @@ class Decoder extends Module{
             is ("b1100111".U){//JALR
                 io.out_op(i).rd:=opcode_reg(i)(11,7)
                 io.out_op(i).r1:=opcode_reg(i)(19,15)
-                io.out_op(i).r2:=opcode_reg(i)(24,20)
+                io.out_op(i).r2:=immediateI(opcode_reg(i))
                 io.out_op(i).type_ := OP_TYPE.OP_JALR
             }
             is("b0010111".U){//AUIPC

@@ -70,6 +70,12 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     io.out_waddr := pre_waddr
     io.out_wdata := pre_wdata
 
+    // Flat indices for the lane-major valid/dirty/age arrays. The explicit
+    // width prevents a dynamic set index from truncating a 128*4-entry array.
+    val lineIndexBits = math.max(1, log2Ceil(n))
+    def lineIndex(lane: Int, set: UInt): UInt =
+      ((lane * setSIZE).U(lineIndexBits.W) + set)(lineIndexBits - 1, 0)
+
     val tagRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, tagBIT, tagBIT)))
     val dataRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, 32, 8)))
     for (i<-0 until lineNum){
@@ -117,13 +123,13 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
             missed:=true.B
                     val threshold_age = WireDefault(0.U(2.W))
             for (i<-0 until lineNum){
-                when (tagRams(i).rdata === needTag){//cache hit, need to update age
+                when (valid(lineIndex(i,lstIdx)) && tagRams(i).rdata === needTag){//cache hit, need to update age
                     io.out_hit:=true.B
                     flag:=(i+1).U
                     missed:=false.B
                     io.out_rdata:=dataRams(i).rdata
-                    threshold_age:=age((i*setSIZE).U+lstIdx)
-                    age((i*setSIZE).U+lstIdx):=0.U
+                    threshold_age:=age(lineIndex(i,lstIdx))
+                    age(lineIndex(i,lstIdx)):=0.U
                 }
                 tags(i):=tagRams(i).rdata
                 datas(i):=dataRams(i).rdata
@@ -131,9 +137,9 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
             when (missed===false.B){//update age
                 for (i<-0 until lineNum)
                 {
-                    when (age((i*setSIZE).U+lstIdx)<threshold_age)
+                    when (age(lineIndex(i,lstIdx))<threshold_age)
                     {
-                       age((i*setSIZE).U+lstIdx):=age((i*setSIZE).U+lstIdx)+1.U
+                       age(lineIndex(i,lstIdx)):=age(lineIndex(i,lstIdx))+1.U
                     }
                 }
             }
