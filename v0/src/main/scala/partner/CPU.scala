@@ -368,9 +368,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     val target = Mux(
                         is_branch,
                         (decoder.io.out_id(i).asSInt +
-                            decoder.io.out_op(i).rd(12, 0).asSInt).asUInt,
+                            decoder.io.out_op(i).rd.asSInt).asUInt,
                         (decoder.io.out_id(i).asSInt +
-                            decoder.io.out_op(i).r1(20, 0).asSInt).asUInt
+                            decoder.io.out_op(i).r1.asSInt).asUInt
                     )
                     when (i.U < decoder.io.out_num && !prior_control &&
                         (is_jal || (is_branch && predictor.io.out(i)(0).asBool))) {

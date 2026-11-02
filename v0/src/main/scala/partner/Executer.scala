@@ -348,7 +348,7 @@ class Executer extends Module{
           val flag=Wire(Bool())
           rs:=rss(l+i.U)
           len:=Mux(rs.type_ === OP_TYPE.OP_LW,4.U(32.W),Mux(rs.type_ === OP_TYPE.OP_LH||rs.type_ === OP_TYPE.OP_LHU, 2.U(32.W),Mux(rs.type_ === OP_TYPE.OP_LB||rs.type_ === OP_TYPE.OP_LBU,1.U(32.W),0.U(32.W))))
-          L1:=(rs.v1.asSInt+rs.v2(11,0).asSInt).asUInt
+          L1:=(rs.v1.asSInt+rs.v2.asSInt).asUInt
           R1:=L1+len
           flag:=false.B
           when (len=/=0.U){
@@ -359,7 +359,7 @@ class Executer extends Module{
               val R2=Wire(UInt(32.W))
               temp_rs:=rss(l+j.U)
               tp := Mux(temp_rs.type_ === OP_TYPE.OP_SB,1.U(32.W),Mux(temp_rs.type_ === OP_TYPE.OP_SH, 2.U(32.W),Mux(temp_rs.type_ === OP_TYPE.OP_SW,4.U(32.W),0.U(32.W))))
-              L2:=(temp_rs.v1.asSInt+temp_rs.dest(11,0).asSInt).asUInt
+              L2:=(temp_rs.v1.asSInt+temp_rs.dest).asUInt
               R2:=L2+tp
               when(tp=/=0.U&&(temp_rs.q1 =/= -1.S||(L2<R1&&L1<R2))){
                 flag:=true.B
@@ -495,16 +495,16 @@ class ALU(val id: Int) extends Executer {
         res:=Mux(temp_rs.v1<temp_rs.v2,1.U,0.U)
       }
       is (OP_TYPE.OP_ADDI){
-        res:=(temp_rs.v1.asSInt+temp_rs.v2(11,0).asSInt).asUInt
+        res:=(temp_rs.v1.asSInt+temp_rs.v2.asSInt).asUInt
       }
       is (OP_TYPE.OP_ANDI){
-        res:=temp_rs.v1 & Cat(Fill(20, temp_rs.v2(11)), temp_rs.v2(11,0))
+        res:=temp_rs.v1 & temp_rs.v2
       }
       is (OP_TYPE.OP_ORI){
-        res:=temp_rs.v1 | Cat(Fill(20, temp_rs.v2(11)), temp_rs.v2(11,0))
+        res:=temp_rs.v1 | temp_rs.v2
       }
       is (OP_TYPE.OP_XORI){
-        res:=temp_rs.v1 ^ Cat(Fill(20, temp_rs.v2(11)), temp_rs.v2(11,0))
+        res:=temp_rs.v1 ^ temp_rs.v2
       }
       is (OP_TYPE.OP_SLLI){
         res:=(temp_rs.v1<<temp_rs.v2(4,0))(31,0)
@@ -516,10 +516,10 @@ class ALU(val id: Int) extends Executer {
         res:=(temp_rs.v1.asSInt>>temp_rs.v2(4,0)).asUInt
       }
       is (OP_TYPE.OP_SLTI){
-        res:=Mux(temp_rs.v1.asSInt<temp_rs.v2(11,0).asSInt,1.U,0.U)
+        res:=Mux(temp_rs.v1.asSInt<temp_rs.v2.asSInt,1.U,0.U)
       }
       is (OP_TYPE.OP_SLTIU){
-        res:=Mux(temp_rs.v1<Cat(Fill(20, temp_rs.v2(11)), temp_rs.v2(11,0)).asUInt,1.U,0.U)
+        res:=Mux(temp_rs.v1<temp_rs.v2,1.U,0.U)
       }
       is (OP_TYPE.OP_JAL,OP_TYPE.OP_JALR,OP_TYPE.OP_AUIPC,OP_TYPE.OP_LUI){
         res:=temp_rs.v1
@@ -690,7 +690,7 @@ class LSU extends Executer{
   when (start_process===true.B){
     len := Mux(temp_rs.type_ === OP_TYPE.OP_LW, 4.U, Mux(temp_rs.type_ === OP_TYPE.OP_LH || temp_rs.type_ === OP_TYPE.OP_LHU, 2.U, Mux(temp_rs.type_ === OP_TYPE.OP_LB || temp_rs.type_ === OP_TYPE.OP_LBU, 1.U, 0.U)))
     when (len=/=0.U){//load
-      L:=(temp_rs.v1.asSInt+temp_rs.v2(11,0).asSInt).asUInt
+      L:=(temp_rs.v1.asSInt+temp_rs.v2.asSInt).asUInt
       R:=L+len
       for (i<-0 until ROBWidth){
         when (i.U<(lsuIO.r-lsuIO.l)){
@@ -747,7 +747,7 @@ class LSU extends Executer{
     }.otherwise{//store
       io.out_cdb.id:=temp_rs.id
       io.out_cdb.value:=temp_rs.v2
-      io.out_cdb.dest:=temp_rs.v1.asSInt+temp_rs.dest(11,0).asSInt
+      io.out_cdb.dest:=temp_rs.v1.asSInt+temp_rs.dest
     }
   }
   }

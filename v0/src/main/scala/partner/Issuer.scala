@@ -222,7 +222,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 }
                                 rs.v2:=r2
                                 rs.dest:=rd.asSInt
-                                rs.is_halt:=(rs.type_ ===OP_TYPE.OP_ADDI&&r1===0.U&&r2===255.U&&rd===10.U)//halt instruction
+                                rs.is_halt:=(rs.type_ ===OP_TYPE.OP_ADDI&&r1===0.U&&r2==="hffffffff".U&&rd===10.U)//halt instruction
                                 prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
@@ -305,7 +305,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 rs.dest:=io.predictor_result(i)(0).asSInt
                                 executer_type:=(ALU_NUM+1).U//bru
                                 rob.id:=clk+i.U
-                                rob.dest:=Mux(rs.dest=/=0.S(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd(12, 0).asSInt).asUInt).asSInt
+                                rob.dest:=Mux(rs.dest=/=0.S(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd.asSInt).asUInt).asSInt
                                 rob.type_ := (~id_buffer(startingPoint+i.U)).asSInt
                                 rob.value:=io.predictor_result(i)
                                 halt:=2.U
@@ -340,13 +340,13 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 rob.dest:=rd.asSInt
                                 when (rd===r1)
                                 {
-                                    io.out_new_pc_val:=(id_buffer(startingPoint+i.U).asSInt+4.S+r2(11,0).asSInt).asUInt
+                                    io.out_new_pc_val:=(id_buffer(startingPoint+i.U).asSInt+4.S+r2.asSInt).asUInt
                                 }.elsewhen (prods(i)(r1)=== -1.S(32.W))
                                 {
-                                    io.out_new_pc_val:=(io.reg(r1).value.asSInt+r2(11,0).asSInt).asUInt
+                                    io.out_new_pc_val:=(io.reg(r1).value.asSInt+r2.asSInt).asUInt
                                 }.otherwise
                                 {
-                                    io.out_new_pc_val:=(temp1.asSInt+r2(11,0).asSInt).asUInt
+                                    io.out_new_pc_val:=(temp1.asSInt+r2.asSInt).asUInt
                                 }
                                 io.out_pc_val_changed:=true.B
                                 halt:=2.U

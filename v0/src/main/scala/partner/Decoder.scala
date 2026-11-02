@@ -27,10 +27,34 @@ class Decoder extends Module{
     //init
     val valid_num_reg=RegInit(0.U(32.W))
     val opcode_reg=Reg(Vec(issueWidth,UInt(32.W)))
-    // Recreate the complete I-type immediate. Op.r2 is UInt(32.W), while the
-    // execution units consume its low 12 bits as a signed immediate.
+    // All signed immediates leave the decoder as complete 32-bit two's
+    // complement values. Consumers can therefore use the field directly.
+    def signExtend(value: UInt): UInt =
+        value.asSInt.pad(32).asUInt
+
     def immediateI(instruction: UInt): UInt =
-        Cat(Fill(20, instruction(31)), instruction(31,20))
+        signExtend(instruction(31,20))
+
+    def immediateS(instruction: UInt): UInt =
+        signExtend(Cat(instruction(31,25), instruction(11,7)))
+
+    def immediateB(instruction: UInt): UInt =
+        signExtend(Cat(
+            instruction(31),
+            instruction(7),
+            instruction(30,25),
+            instruction(11,8),
+            0.U(1.W),
+        ))
+
+    def immediateJ(instruction: UInt): UInt =
+        signExtend(Cat(
+            instruction(31),
+            instruction(19,12),
+            instruction(20),
+            instruction(30,21),
+            0.U(1.W),
+        ))
     //decode
     valid_num_reg:=io.valid_num//wait for a cycle
     io.out_num:=valid_num_reg
@@ -163,7 +187,7 @@ class Decoder extends Module{
                 }
             }
             is("b0100011".U){//S
-                io.out_op(i).rd:=Cat(opcode_reg(i)(31,25),opcode_reg(i)(11,7))
+                io.out_op(i).rd:=immediateS(opcode_reg(i))
                 io.out_op(i).r1:=opcode_reg(i)(19,15)
                 io.out_op(i).r2:=opcode_reg(i)(24,20)
                 switch(opcode_reg(i)(14,12)){
@@ -179,7 +203,7 @@ class Decoder extends Module{
                 }
             }
             is("b1100011".U){//B
-                io.out_op(i).rd:=Cat(opcode_reg(i)(31,31),opcode_reg(i)(7,7),opcode_reg(i)(30,25),opcode_reg(i)(11,8),false.B)
+                io.out_op(i).rd:=immediateB(opcode_reg(i))
                 io.out_op(i).r1:=opcode_reg(i)(19,15)
                 io.out_op(i).r2:=opcode_reg(i)(24,20)
                 switch(opcode_reg(i)(14,12)){
@@ -205,7 +229,7 @@ class Decoder extends Module{
             }
             is("b1101111".U){//JAL
                 io.out_op(i).rd:=opcode_reg(i)(11,7)
-                io.out_op(i).r1:=Cat(opcode_reg(i)(31,31),opcode_reg(i)(19,12),opcode_reg(i)(20,20),opcode_reg(i)(30,21))
+                io.out_op(i).r1:=immediateJ(opcode_reg(i))
                 io.out_op(i).r2:=0.U(32.W)
                 io.out_op(i).type_ := OP_TYPE.OP_JAL
             }
