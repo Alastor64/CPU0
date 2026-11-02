@@ -62,9 +62,20 @@ class Committer extends Module{//needs to add branch predictor!
   io.out_space:=(ROBWidth-1).U-(r-l)
   io.out_robs:=robs
   io.out_reg_valid:=false.B
+  io.out_reg_id:=0.U
+  io.out_reg_val:=0.U
+  io.out_reg_prod:=0.U
   io.out_store_valid:=false.B
+  io.out_store_addr:=0.U
+  io.out_store_value:=0.U
+  io.out_store_mask:=0.U
   io.out_halt:=false.B
+  io.out_flush:=false.B
+  io.out_flushval:=0.U
+  io.out_newaddr:=0.U
   io.out_predictor_valid:=false.B
+  io.out_predictor_addr:=0.U
+  io.out_predictor_res:=0.U
   
   val waiting=RegInit(false.B)
 

@@ -40,7 +40,11 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
         val out_wdata = Output(UInt(32.W))//the discarded data
 
     })
+    io.out_hit := false.B
+    io.out_rdata := 0.U
     io.out_wvalid := false.B
+    io.out_waddr := 0.U
+    io.out_wdata := 0.U
     val n = setSIZE * lineNum
     val valid = RegInit(VecInit(Seq.fill(n)(false.B)))
     val dirty = RegInit(VecInit(Seq.fill(n)(false.B)))
@@ -54,17 +58,33 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     val lstMask = RegInit(0.U(4.W))
     val lstIdx = Reg(UInt(setBIT.W))
     val waiting = RegInit(0.U(2.W))//0: initial state, 1 waiting for new val loaded from memory, 2 waiting for the discarded dirty value to be store into memory
+    val writeback_valid = RegInit(false.B)
     val tags = Reg(Vec(lineNum,UInt(tagBIT.W)))
     val datas = Reg(Vec(lineNum,UInt(32.W)))
 
     val pre_waddr = Reg(UInt(32.W))
     val pre_wdata = Reg(UInt(32.W))
+    // Register the writeback request so the parent's acknowledge cannot form
+    // a combinational path back into this output.
+    io.out_wvalid := writeback_valid
+    io.out_waddr := pre_waddr
+    io.out_wdata := pre_wdata
 
     val tagRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, tagBIT, tagBIT)))
     val dataRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, 32, 8)))
     for (i<-0 until lineNum){
+        tagRams(i).clk:=clock
+        dataRams(i).clk:=clock
         tagRams(i).en:=false.B
         dataRams(i).en:=false.B
+        tagRams(i).we := false.B
+        tagRams(i).wmask := 0.U
+        tagRams(i).addr := 0.U
+        tagRams(i).wdata := 0.U
+        dataRams(i).we := false.B
+        dataRams(i).wmask := 0.U
+        dataRams(i).addr := 0.U
+        dataRams(i).wdata := 0.U
     }
     val tag = Wire(UInt(tagBIT.W))
     val set_idx = Wire(UInt(setBIT.W))
@@ -76,6 +96,9 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
 
     write_data:=false.B
     missed:=false.B
+    flag:=0.U
+    data:=0.U
+    isdirty:=false.B
     set_idx := io.addr(setBIT+offsetBIT-1,offsetBIT)
     tag := io.addr(31,setBIT+offsetBIT)
 
@@ -92,7 +115,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
         {
             flag:=0.U//0 for invalid
             missed:=true.B
-            val threshold_age = Wire(UInt(2.W))
+                    val threshold_age = WireDefault(0.U(2.W))
             for (i<-0 until lineNum){
                 when (tagRams(i).rdata === needTag){//cache hit, need to update age
                     io.out_hit:=true.B
@@ -171,32 +194,25 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     }.otherwise{
         when (io.store_received===true.B){
             waiting:=0.U
-        }.otherwise{
-            io.out_wvalid:=true.B
-            io.out_waddr:=pre_waddr
-            io.out_wdata:=pre_wdata
+            writeback_valid:=false.B
         }
     }
     when (write_data===true.B)
     {
-        val chosen = Wire(UInt(2.W))
+        val chosen = WireDefault(0.U(2.W))
         for (i<-(lineNum-1) to 0 by -1){
             when (valid((i*setSIZE).U+lstIdx)===false.B){
                 chosen:=i.U
             }.elsewhen (age((i*setSIZE).U+lstIdx)===(lineNum-1).U){//maxage,need to be replaced
                 chosen:=i.U
                 when (dirty((i*setSIZE).U+lstIdx)===true.B){
-                    io.out_wvalid:=true.B
+                    writeback_valid:=true.B
                     when (missed===true.B)//missed in the current cycle
                     {
-                        io.out_waddr:=(Cat(tagRams(i).rdata,lstIdx)<<offsetBIT.U)
                         pre_waddr:=(Cat(tagRams(i).rdata,lstIdx)<<offsetBIT.U)
-                        io.out_wdata:=dataRams(i).rdata
                         pre_wdata:=dataRams(i).rdata
                     }.otherwise{
-                        io.out_waddr:=(Cat(tags(i),lstIdx)<<offsetBIT.U)
                         pre_waddr:=(Cat(tags(i),lstIdx)<<offsetBIT.U)
-                        io.out_wdata:=datas(i)
                         pre_wdata:=datas(i)
                     }
                     waiting:=2.U

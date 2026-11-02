@@ -182,6 +182,8 @@ class Mult extends Module{
     adder4.io.b:=Cat(0.U(16.W),RegNext(p10(31,16)))
 
     io.c:=Mux(RegNext(RegNext(io.op)),adder2.io.sum,adder4.io.sum)
+    io.ready:=0.U
+    io.received:=0.U
     when (io.clear_valid)
     {
       received:=0.U
@@ -284,7 +286,11 @@ class Executer extends Module{
   val temp_rs=Wire(new RS)
   val selected=Wire(Vec(RSWidth+1,Bool()))
   val init = Wire(new CDB)
+  temp_rs:=0.U.asTypeOf(temp_rs)
+  selected:=false.B.asTypeOf(selected)
   init.id :=0.U
+  init.dest :=0.S
+  init.value :=0.U
   val out_cdb= RegInit(init)
 
   io.out_space:= (RSWidth-1).U-(r-l)
@@ -400,6 +406,12 @@ class ALU(val id: Int) extends Executer {
   })
   aluIO.out_mult_valid:=false.B
   aluIO.out_div_valid:=false.B
+  aluIO.out_mult_a:=0.U
+  aluIO.out_mult_b:=0.U
+  aluIO.out_mult_op:=false.B
+  aluIO.out_div_a:=0.U
+  aluIO.out_div_b:=0.U
+  aluIO.out_div_op:=false.B
   val temp_out_mult_a=Reg(UInt(32.W))
   val temp_out_mult_b=Reg(UInt(32.W))
   val temp_out_mult_op=Reg(Bool())
@@ -410,6 +422,7 @@ class ALU(val id: Int) extends Executer {
   val temp_out_div_valid=RegInit(false.B)
 
   val res= Wire(UInt(32.W))
+  res:=0.U
   val isMulDiv=Wire(Bool())
   isMulDiv:=false.B
   val waiting=RegInit(false.B)
@@ -621,6 +634,8 @@ class LSU extends Executer{
   val canOutput= Wire(Bool())
   canOutput:=true.B
   lsuIO.out_valid:=false.B
+  lsuIO.out_addr:=0.U
+  res:=0.U
 
   when (io.clear_valid===true.B){
     waiting:=false.B
@@ -628,14 +643,15 @@ class LSU extends Executer{
   when (in_process===true.B){
       when (waiting===true.B)
       {
+        // Keep the request asserted until the response arrives. Suppressing
+        // it with addr_received would feed the parent's acknowledgement
+        // (which itself depends on out_valid) directly back into out_valid.
+        lsuIO.out_valid:=true.B
+        lsuIO.out_addr:=wanted
+        canOutput:=false.B
         when (lsuIO.addr_received===true.B)
         {
           waiting:=false.B
-        }.otherwise
-        {
-          lsuIO.out_valid:=true.B
-          lsuIO.out_addr:=wanted
-          canOutput:=false.B
         }
       }
       when (canOutput===true.B&&lsuIO.addr_valid===true.B){
@@ -666,6 +682,9 @@ class LSU extends Executer{
   val len=Wire(UInt(32.W))
   val L=Wire(UInt(32.W))
   val R=Wire(UInt(32.W))
+  len:=0.U
+  L:=0.U
+  R:=0.U
   val vals=Wire(Vec(4,UInt(9.W)))
   for (i<-0 until 4){vals(i):=0x100.U}
   when (start_process===true.B){
@@ -737,6 +756,7 @@ class LSU extends Executer{
 
 class BRU extends Executer{
   val res=Wire(Bool())
+  res:=false.B
   when (io.clear_valid===false.B)
   {
     when (start_process===true.B){

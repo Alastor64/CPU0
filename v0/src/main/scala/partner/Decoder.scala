@@ -28,12 +28,18 @@ class Decoder extends Module{
     val valid_num_reg=RegInit(0.U(32.W))
     val opcode_reg=Reg(Vec(issueWidth,UInt(32.W)))
     //decode
-    valid_num_reg:=io.valid_num
+    valid_num_reg:=io.valid_num//wait for a cycle
     io.out_num:=valid_num_reg
     for (i<-0 until issueWidth){
         opcode_reg(i):=io.opcode(i)
         io.out_id(i):=RegNext(io.id(i))
         io.out_op(i).id:=0.U(32.W)
+        // Invalid instructions and unsupported opcodes must still produce a
+        // deterministic, inert decode result.
+        io.out_op(i).rd:=0.U(32.W)
+        io.out_op(i).r1:=0.U(32.W)
+        io.out_op(i).r2:=0.U(32.W)
+        io.out_op(i).type_ := OP_TYPE.OP_NONE
         switch (opcode_reg(i)(6,0)){
             is("b0110011".U){//R
                 io.out_op(i).rd:=opcode_reg(i)(11,7)

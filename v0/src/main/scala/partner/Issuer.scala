@@ -47,7 +47,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   clk:=clk+issueWidth.U(32.W)
   val op_buffer=Reg(Vec(issuerBufferWidth, new Op))
   val id_buffer=Reg(Vec(issuerBufferWidth,UInt(32.W)))
-  val prods=Wire(Vec(32*(issueWidth+1),SInt(32.W)))
+  val prods=Wire(Vec(issueWidth+1,Vec(32,SInt(32.W))))
   val spaces=Wire(Vec((ALU_NUM+2)*(issueWidth+1),UInt(32.W)))
   val should_break=Wire(Vec(issueWidth+1,Bool()))
   val out_num=Wire(Vec(issueWidth+1,UInt(32.W)))
@@ -56,6 +56,11 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   val startALU=RegInit(0.U(2.W))//the first alu to select
   io.out_pc_val_changed:=false.B
   io.out_new_pc_val:=0.U
+  io.out_executer_RS:=0.U.asTypeOf(io.out_executer_RS)
+  io.out_executer_type:=0.U.asTypeOf(io.out_executer_type)
+  io.out_ROB:=0.U.asTypeOf(io.out_ROB)
+  io.out_prod:=0.S.asTypeOf(io.out_prod)
+  io.out_valid:=0.U
 
   //add into buffer
   when ((l-r-1.U) < io.valid_num){//buffer full
@@ -76,14 +81,20 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     r:=r+io.valid_num
   }
 
-
-  should_break(0):=false.B
-  out_num(0):=0.U(32.W)
-  for (j<-0 until ALU_NUM+2){
+  for (j<-0 until issueWidth+1){
+    should_break(j):=false.B
+    out_num(j):=0.U(32.W)
+  }
+  for (j<-0 until (ALU_NUM+2)*(issueWidth+1)){
     spaces(j):=0.U
   }
+  for (i<-0 until issueWidth+1){
+    for (j<-0 until 32){
+      prods(i)(j):=0.S
+    }
+  }
   for (j<-0 until 32){
-    prods(j):=io.reg(j).prod
+    prods(0)(j):=io.reg(j).prod
     io.out_prod_valid(j):=false.B
   }
 //multi issuing
@@ -95,7 +106,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   {
     for (i<-0 until issueWidth){
             for (j<-0 until 32){
-                prods((i+1)*32+j):=prods(i*32+j)
+                prods(i+1)(j):=prods(i)(j)
             }
             for (j<-0 until ALU_NUM+2){
                 spaces((i+1)*(ALU_NUM+2)+j):=spaces(i*(ALU_NUM+2)+j)
@@ -127,17 +138,21 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     val has_temp1=Wire(Bool())
                     val has_temp2=Wire(Bool())
                     val executer_type=Wire(UInt(32.W))
+                    rs:=0.U.asTypeOf(rs)
+                    temp1:=0.U
+                    temp2:=0.U
+                    executer_type:=0.U
                     has_temp1:=false.B
                     has_temp2:=false.B
                     rd:=io.cur_op(l+i.U).rd
                     r1:=io.cur_op(l+i.U).r1
                     r2:=io.cur_op(l+i.U).r2
                     for (j<-0 until ROBWidth){
-                        when (io.robs(j).ready===true.B&&io.robs(j).id===prods((i*32).U+r1).asUInt){
+                        when (io.robs(j).ready===true.B&&io.robs(j).id===prods(i)(r1).asUInt){
                             temp1:=io.robs(j).value
                             has_temp1:=true.B
                         }
-                        when (io.robs(j).ready===true.B&&io.robs(j).id===prods((i*32).U+r2).asUInt){
+                        when (io.robs(j).ready===true.B&&io.robs(j).id===prods(i)(r2).asUInt){
                             temp2:=io.robs(j).value
                             has_temp2:=true.B
                         }
@@ -148,9 +163,14 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     val alu_id=Wire(UInt(3.W))
                     alu_id:=ALU_NUM.U
                     for (j<-ALU_NUM-1 to 0 by -1){
-                        when (spaces(i.U*(ALU_NUM+2).U+(j.U+startALU)(1,0))<io.executer_space((j.U+startALU)(1,0))){
-                            alu_id:=(j.U+startALU)(1,0)
-                            startALU:=alu_id+1.U
+                        val candidate = (j.U+startALU)(1,0)
+                        for (k<-0 until ALU_NUM){
+                            when (candidate===k.U){
+                                when (spaces(i*(ALU_NUM+2)+k)<io.executer_space(k)){
+                                    alu_id:=k.U
+                                    startALU:=alu_id+1.U
+                                }
+                            }
                         }
                     }
                     switch (rs.type_){
@@ -160,26 +180,26 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
-                                when (prods((i*32).U+r1)=== -1.S(32.W)){
+                                when (prods(i)(r1)=== -1.S(32.W)){
                                     rs.v1:=io.reg(r1).value
                                 }.otherwise{
                                     when (has_temp1===true.B){
                                         rs.v1:=temp1
                                     }.otherwise{
-                                        rs.q1:=prods((i*32).U+r1)
+                                        rs.q1:=prods(i)(r1)
                                     }
                                 }
-                                when (prods((i*32).U+r2)=== -1.S(32.W)){
+                                when (prods(i)(r2)=== -1.S(32.W)){
                                     rs.v2:=io.reg(r2).value
                                 }.otherwise{
                                     when (has_temp2===true.B){
                                         rs.v2:=temp2
                                     }.otherwise{
-                                        rs.q2:=prods((i*32).U+r2)
+                                        rs.q2:=prods(i)(r2)
                                     }
                                 }
                                 rs.dest:=rd.asSInt
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
@@ -191,19 +211,19 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             when (alu_id===ALU_NUM.U){//full alu
                                 halt:=1.U
                             }.otherwise{
-                                when (prods((i*32).U+r1)=== -1.S(32.W)){
+                                when (prods(i)(r1)=== -1.S(32.W)){
                                     rs.v1:=io.reg(r1).value
                                 }.otherwise{
                                     when (has_temp1===true.B){
                                         rs.v1:=temp1
                                     }.otherwise{
-                                        rs.q1:=prods((i*32).U+r1)
+                                        rs.q1:=prods(i)(r1)
                                     }
                                 }
                                 rs.v2:=r2
                                 rs.dest:=rd.asSInt
                                 rs.is_halt:=(rs.type_ ===OP_TYPE.OP_ADDI&&r1===0.U&&r2===255.U&&rd===10.U)//halt instruction
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
@@ -214,18 +234,18 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             when (spaces(i*(ALU_NUM+2)+ALU_NUM)===io.executer_space(ALU_NUM)){
                                 halt:=1.U
                             }.otherwise{
-                                when (prods((i*32).U+r1)=== -1.S(32.W)){
+                                when (prods(i)(r1)=== -1.S(32.W)){
                                     rs.v1:=io.reg(r1).value
                                 }.otherwise{
                                     when (has_temp1===true.B){
                                         rs.v1:=temp1
                                     }.otherwise{
-                                        rs.q1:=prods((i*32).U+r1)
+                                        rs.q1:=prods(i)(r1)
                                     }
                                 }
                                 rs.v2:=r2
                                 rs.dest:=rd.asSInt
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=ALU_NUM.U//lsu
                                 rob.id:=clk+i.U
@@ -236,22 +256,22 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             when (spaces(i*(ALU_NUM+2)+ALU_NUM)===io.executer_space(ALU_NUM)){
                                 halt:=1.U
                             }.otherwise{
-                                when (prods((i*32).U+r1)=== -1.S(32.W)){
+                                when (prods(i)(r1)=== -1.S(32.W)){
                                     rs.v1:=io.reg(r1).value
                                 }.otherwise{
                                     when (has_temp1===true.B){
                                         rs.v1:=temp1
                                     }.otherwise{
-                                        rs.q1:=prods((i*32).U+r1)
+                                        rs.q1:=prods(i)(r1)
                                     }
                                 }
-                                when (prods((i*32).U+r2)=== -1.S(32.W)){
+                                when (prods(i)(r2)=== -1.S(32.W)){
                                     rs.v2:=io.reg(r2).value
                                 }.otherwise{
                                     when (has_temp2===true.B){
                                         rs.v2:=temp2
                                     }.otherwise{
-                                        rs.q2:=prods((i*32).U+r2)
+                                        rs.q2:=prods(i)(r2)
                                     }
                                 }
                                 rs.dest:=rd.asSInt
@@ -264,22 +284,22 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             when (spaces(i*(ALU_NUM+2)+ALU_NUM+1)===io.executer_space(ALU_NUM+1)){//bru_full
                                 halt:=1.U
                             }.otherwise{
-                                when (prods((i*32).U+r1)=== -1.S(32.W)){
+                                when (prods(i)(r1)=== -1.S(32.W)){
                                     rs.v1:=io.reg(r1).value
                                 }.otherwise{
                                     when (has_temp1===true.B){
                                         rs.v1:=temp1
                                     }.otherwise{
-                                        rs.q1:=prods((i*32).U+r1)
+                                        rs.q1:=prods(i)(r1)
                                     }
                                 }
-                                when (prods((i*32).U+r2)=== -1.S(32.W)){
+                                when (prods(i)(r2)=== -1.S(32.W)){
                                     rs.v2:=io.reg(r2).value
                                 }.otherwise{
                                     when (has_temp2===true.B){
                                         rs.v2:=temp2
                                     }.otherwise{
-                                        rs.q2:=prods((i*32).U+r2)
+                                        rs.q2:=prods(i)(r2)
                                     }
                                 }
                                 rs.dest:=io.predictor_result(i)(0).asSInt
@@ -297,7 +317,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
                                 rs.dest:=rd.asSInt
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
@@ -308,12 +328,12 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                         is(OP_TYPE.OP_JALR){
                             // JALR 的目标依赖 rs1，无法在取指阶段确定，
                             // 因此由 Issue 在操作数就绪后发起一次重定向。
-                            when (alu_id===ALU_NUM.U||(rd=/=r1&&prods((i*32).U+r1)=/=(-1).S&&has_temp1===false.B)){//full alu or not clear rs1
+                            when (alu_id===ALU_NUM.U||(rd=/=r1&&prods(i)(r1)=/=(-1).S&&has_temp1===false.B)){//full alu or not clear rs1
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
                                 rs.dest:=rd.asSInt
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
@@ -321,7 +341,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 when (rd===r1)
                                 {
                                     io.out_new_pc_val:=(id_buffer(startingPoint+i.U).asSInt+4.S+r2(11,0).asSInt).asUInt
-                                }.elsewhen (prods((i*32).U+r1)=== -1.S(32.W))
+                                }.elsewhen (prods(i)(r1)=== -1.S(32.W))
                                 {
                                     io.out_new_pc_val:=(io.reg(r1).value.asSInt+r2(11,0).asSInt).asUInt
                                 }.otherwise
@@ -338,7 +358,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+r1
                                 rs.dest:=rd.asSInt
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
@@ -351,7 +371,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }.otherwise{
                                 rs.v1:=r1
                                 rs.dest:=rd.asSInt
-                                prods(((i+1)*32).U+rd):=(clk+i.U).asSInt
+                                prods(i+1)(rd):=(clk+i.U).asSInt
                                 io.out_prod_valid(rd):=true.B
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
@@ -363,7 +383,13 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     io.out_executer_RS(i):=rs
                     io.out_ROB(i):=rob
                     when (halt=/=1.U){
-                        spaces(((i+1)*(ALU_NUM+2)).U+executer_type):=spaces(i.U*(ALU_NUM+2).U+executer_type)+1.U
+                        // Use fixed indices so the staged occupancy vector is
+                        // not inferred as a combinational self-cycle.
+                        for (j<-0 until ALU_NUM+2){
+                            when (executer_type===j.U){
+                                spaces((i+1)*(ALU_NUM+2)+j):=spaces(i*(ALU_NUM+2)+j)+1.U
+                            }
+                        }
                         out_num(i+1):=(i+1).U
                     }
                     when (halt=/=0.U){
@@ -375,7 +401,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
         io.out_valid:=out_num(issueWidth)
         l:=startingPoint+out_num(issueWidth)
         for (i<-0 until 32){
-            io.out_prod(i):=prods(32*issueWidth+i)
+            io.out_prod(i):=prods(issueWidth)(i)
         }
     }
   // Commit 侧只负责丢弃预测错误路径；下一取指 PC 由 Fetcher 管理。

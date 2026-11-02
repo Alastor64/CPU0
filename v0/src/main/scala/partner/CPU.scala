@@ -81,11 +81,21 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val decoder = Module(new Decoder)
     val predictor = Module(new Predictor)
 
+    // Module inputs and combinational wires have no storage. Define safe
+    // values for every inactive control path; later assignments override
+    // these defaults when a module is actually used.
+    io.araddr := 0.U
     io.arvalid:=false.B
     io.rready:=true.B
+    io.awaddr := 0.U
     io.awvalid:=false.B
+    io.wdata := 0.U
+    io.wstrb := 0.U
     io.wvalid:=false.B
     io.bready:=true.B
+
+    Icache_out_num := 0.U
+    opcode := 0.S
 
     halt:=halt|committer.io.out_halt
     flush:=committer.io.out_flush
@@ -105,6 +115,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     decoder.io.valid_num:=0.U
 
     for (i<-0 until issueWidth){
+        Icache(i).io.addr:=0.U
+        Icache(i).io.need_load:=false.B
+        Icache(i).io.wdata:=0.U
+        Icache(i).io.wmask:=0.U
+        Icache(i).io.new_data:=0.U
         Icache(i).io.load_valid:=false.B
         Icache(i).io.store_valid:=false.B
         Icache(i).io.new_valid:=false.B
@@ -112,12 +127,83 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         Icache(i).io.clear_status:=false.B
     }
     issuer.io.flush_valid:=false.B
+    Dcache.io.addr:=0.U
+    Dcache.io.need_load:=false.B
+    Dcache.io.wdata:=0.U
+    Dcache.io.wmask:=0.U
+    Dcache.io.new_data:=0.U
     Dcache.io.load_valid:=false.B
     Dcache.io.store_valid:=false.B
     Dcache.io.new_valid:=false.B
     Dcache.io.store_received:=false.B
     Dcache.io.clear_status:=false.B
 
+    // Decoder input payloads are irrelevant for slots without a valid
+    // instruction, but their ports still require deterministic drivers.
+    decoder.io.id := 0.U.asTypeOf(decoder.io.id)
+    decoder.io.opcode := 0.U.asTypeOf(decoder.io.opcode)
+
+    // Predictor queries and updates are disabled unless the main path
+    // explicitly enables them below.
+    predictor.io.qaddrs := 0.U.asTypeOf(predictor.io.qaddrs)
+    predictor.io.uvalid := false.B
+    predictor.io.uaddr := 0.U
+    predictor.io.ures := 0.U
+
+    // Issuer receives instruction and machine state only on the main path.
+    issuer.io.id := 0.U.asTypeOf(issuer.io.id)
+    issuer.io.cur_op := 0.U.asTypeOf(issuer.io.cur_op)
+    issuer.io.predictor_result := 0.U.asTypeOf(issuer.io.predictor_result)
+    issuer.io.reg := 0.U.asTypeOf(issuer.io.reg)
+    issuer.io.robs := 0.U.asTypeOf(issuer.io.robs)
+    issuer.io.executer_space := 0.U.asTypeOf(issuer.io.executer_space)
+    issuer.io.committer_space := 0.U
+
+    // Execution units and the committer accept no work by default.
+    for (i <- 0 until ALU_NUM) {
+        alus(i).io.valid_num := 0.U
+        alus(i).io.rs := 0.U.asTypeOf(alus(i).io.rs)
+        alus(i).io.cdbs := 0.U.asTypeOf(alus(i).io.cdbs)
+        alus(i).io.clear_id := 0.S
+        alus(i).aluIO.mult_valid := 0.U
+        alus(i).aluIO.mult_res := 0.U
+        alus(i).aluIO.mult_received := 0.U
+        alus(i).aluIO.div_valid := 0.U
+        alus(i).aluIO.div_res := 0.U
+        alus(i).aluIO.div_received := 0.U
+    }
+
+    lsu.io.valid_num := 0.U
+    lsu.io.rs := 0.U.asTypeOf(lsu.io.rs)
+    lsu.io.cdbs := 0.U.asTypeOf(lsu.io.cdbs)
+    lsu.io.clear_id := 0.S
+    lsu.lsuIO.robs := 0.U.asTypeOf(lsu.lsuIO.robs)
+    lsu.lsuIO.l := 0.U
+    lsu.lsuIO.r := 0.U
+    lsu.lsuIO.addr_valid := false.B
+    lsu.lsuIO.addr_received := false.B
+    lsu.lsuIO.addr_value := 0.U
+
+    bru.io.valid_num := 0.U
+    bru.io.rs := 0.U.asTypeOf(bru.io.rs)
+    bru.io.cdbs := 0.U.asTypeOf(bru.io.cdbs)
+    bru.io.clear_id := 0.S
+
+    committer.io.valid_num := 0.U
+    committer.io.in_robs := 0.U.asTypeOf(committer.io.in_robs)
+    committer.io.cdbs := 0.U.asTypeOf(committer.io.cdbs)
+    committer.io.store_received := false.B
+
+    mult.io.valid := 0.U
+    mult.io.a := 0.U
+    mult.io.b := 0.U
+    mult.io.op := false.B
+    mult.io.clear_valid := false.B
+    div.io.valid := 0.U
+    div.io.a := 0.U
+    div.io.b := 0.U
+    div.io.op := false.B
+    div.io.clear_valid := false.B
 
     val fetcher_waiting = RegInit(0.U(2.W))//0: initial state; 1: set arvalid=true&araddr, waiting for arready; 2: received arready=true, set rready=true, waiting for rvalid; when received rvalid, return to 0
     val hits = Wire(Vec(issueWidth+1,UInt(3.W)))
@@ -126,6 +212,10 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val lsu_lst_addr=Reg(UInt(32.W))
     val committer_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for Dcache write back
     val Dcache_waiting = RegInit(0.U(2.W))
+
+    hits := 0.U.asTypeOf(hits)
+    fetcher_next := 0.U
+    new_pc_val := 0.U
 
     when (halt===false.B){
         //Dcache write back  
@@ -317,14 +407,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 //handling issuer output
                 //executer input
                 val num=Wire(UInt(32.W))
-                val cnts=Wire(Vec((issueWidth+1)*(ALU_NUM+2),UInt(32.W)))
+                val cnts=Wire(Vec(issueWidth+1,Vec(ALU_NUM+2,UInt(32.W))))
                 num:=issuer.io.out_valid
                 for (i<-0 until ALU_NUM+2){
-                    cnts(i):=0.U(32.W)
+                    cnts(0)(i):=0.U(32.W)
                 }
                 for (i<-0 until issueWidth){
                     for (j<-0 until ALU_NUM+2){
-                        cnts((i+1)*(ALU_NUM+2)+j):=cnts(i*(ALU_NUM+2)+j)
+                        cnts(i+1)(j):=cnts(i)(j)
                     }
                     when (i.U<num){
                         val tp= Wire(UInt(32.W))
@@ -333,22 +423,26 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                             for (j<-0 until ALU_NUM)//indexing workaround 
                             {
                                 when (j.U===tp){
-                                    alus(j).io.rs(cnts(i*(ALU_NUM+2)+j)):=issuer.io.out_executer_RS(i)
+                                    alus(j).io.rs(cnts(i)(j)):=issuer.io.out_executer_RS(i)
                                 }
                             }
                         }.elsewhen(tp===ALU_NUM.U){
-                            lsu.io.rs(cnts(i*(ALU_NUM+2)+ALU_NUM)):=issuer.io.out_executer_RS(i)
+                            lsu.io.rs(cnts(i)(ALU_NUM)):=issuer.io.out_executer_RS(i)
                         }.otherwise{
-                            bru.io.rs(cnts(i*(ALU_NUM+2)+ALU_NUM+1)):=issuer.io.out_executer_RS(i)
+                            bru.io.rs(cnts(i)(ALU_NUM+1)):=issuer.io.out_executer_RS(i)
                         }
-                        cnts(((i+1)*(ALU_NUM+2)).U+tp):=cnts(i.U*(ALU_NUM+2).U+tp)+1.U
+                        for (j<-0 until ALU_NUM+2){
+                            when (tp===j.U){
+                                cnts(i+1)(j):=cnts(i)(j)+1.U
+                            }
+                        }
                     }
                 }
                 for (i<-0 until ALU_NUM){
-                    alus(i).io.valid_num:=cnts(issueWidth*(ALU_NUM+2)+i)
+                    alus(i).io.valid_num:=cnts(issueWidth)(i)
                 }
-                lsu.io.valid_num:=cnts(issueWidth*(ALU_NUM+2)+ALU_NUM)
-                bru.io.valid_num:=cnts(issueWidth*(ALU_NUM+2)+ALU_NUM+1)
+                lsu.io.valid_num:=cnts(issueWidth)(ALU_NUM)
+                bru.io.valid_num:=cnts(issueWidth)(ALU_NUM+1)
                 //committer input
                 committer.io.valid_num:=num
                 committer.io.in_robs:= issuer.io.out_ROB
