@@ -60,7 +60,8 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     val needTag = Reg(UInt(tagBIT.W))
     val lstLoad = RegInit(false.B)
     val lstStore = RegInit(false.B)
-    val lstData = RegInit(0.U(4.W))
+    // Preserve the full store payload while a cache request is outstanding.
+    val lstData = RegInit(0.U(32.W))
     val lstMask = RegInit(0.U(4.W))
     val lstIdx = Reg(UInt(setBIT.W))
     val waiting = RegInit(0.U(2.W))//0: initial state, 1 waiting for new val loaded from memory, 2 waiting for the discarded dirty value to be store into memory
