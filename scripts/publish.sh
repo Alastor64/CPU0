@@ -19,7 +19,7 @@ scripts_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$scripts_dir/env.sh"
 
 project=v0
-main_class=cpu.Generate
+main_class=cpu.generate.Generate
 out_rel="$project/build/generated"
 rtl_name=student_top.sv
 generated_rel=verilog/generated/$rtl_name

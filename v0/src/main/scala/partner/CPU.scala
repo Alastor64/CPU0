@@ -6,7 +6,7 @@
 //> using options -unchecked -deprecation -feature -language:reflectiveCalls
 //> using options -Xfatal-warnings -Ywarn-unused
 
-package CPU
+package cpu.main
 import Config._
 import Config.CPUConfig._
 import Op._

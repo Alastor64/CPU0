@@ -1,4 +1,4 @@
-package cpu
+package cpu.generate
 
 import chisel3._
 // _root_ 前缀是为了和 chisel3.util.circt 下的同名类区分开
@@ -7,7 +7,7 @@ import _root_.circt.stage.ChiselStage
 /** 把 CPU 顶层导出成 SystemVerilog，交给助教框架编译与评测。
   *
   * 用法（在仓库根目录）：
-  *   scripts/gen.sh v0 cpu.Generate v0/build/generated
+  *   scripts/gen.sh v0 cpu.generate.Generate v0/build/generated
   * 或者直接用发布脚本（生成 + 复制到提交仓库 + 维护 filelist）：
   *   scripts/publish.sh
   *

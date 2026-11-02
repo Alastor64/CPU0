@@ -7,7 +7,7 @@
 //> using options -Xfatal-warnings -Ywarn-unused
 package cpu2026
 
-import CPU._
+import cpu.main.CPU
 import chisel3._
 import chisel3.experimental.{ExtModule, IntParam}
 
