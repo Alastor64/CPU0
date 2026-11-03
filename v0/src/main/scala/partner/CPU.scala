@@ -588,7 +588,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }.elsewhen (committer.io.out_reg_valid===true.B)
                     {
                         val id=Wire(UInt(5.W))
-                        id:=committer.io.out_reg_valid
+                        id:=committer.io.out_reg_id
                         regs(id).value := committer.io.out_reg_val
                         when (regs(id).prod.asUInt === committer.io.out_reg_prod&&issuer.io.out_prod_valid(id)===false.B){//not modified by issuer
                             regs(id).prod := (-1).S
