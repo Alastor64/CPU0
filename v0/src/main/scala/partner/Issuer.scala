@@ -118,6 +118,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     halt:=0.U
                     val rs=Wire(new RS)
                     val rob=Wire(new ROB)
+                    // Chisel uses the last connection, so initialise the whole
+                    // bundle before assigning the fields that carry meaning.
+                    rs:=0.U.asTypeOf(rs)
                     rs.type_ := op_buffer(startingPoint+i.U).type_
                     rs.id:= clk+i.U
                     rs.q1:= (-1).S
@@ -138,7 +141,6 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     val has_temp1=Wire(Bool())
                     val has_temp2=Wire(Bool())
                     val executer_type=Wire(UInt(32.W))
-                    rs:=0.U.asTypeOf(rs)
                     temp1:=0.U
                     temp2:=0.U
                     executer_type:=0.U
