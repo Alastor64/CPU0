@@ -113,7 +113,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
             }
             should_break(i+1):=should_break(i)
             out_num(i+1):=out_num(i)
-            when (should_break(i)===false.B &&i.U < (startingPoint-r-1.U)&&i.U<io.committer_space){
+            when (should_break(i)===false.B &&i.U < (r-startingPoint)&&i.U<io.committer_space){
                     val halt=Wire(UInt(2.W))//0 ok, 1 no space halt, 2 jump triggered
                     halt:=0.U
                     val rs=Wire(new RS)
