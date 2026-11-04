@@ -21,6 +21,8 @@ import Config.CPUConfig.issueWidth
 
 class Issuer extends Module{//needs to rewrite alu choosing!
   val io = IO(new Bundle {
+    val in_valid = Input(Bool())
+    val in_ready = Output(Bool())
     val valid_num = Input(UInt(32.W))
     val flush_valid = Input(Bool())
     val id = Input(Vec(issueWidth,UInt(32.W)))
@@ -63,21 +65,17 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   io.out_valid:=0.U
 
   //add into buffer
-  when ((l-r-1.U) < io.valid_num){//buffer full
-   for(i<-0 until issueWidth){
-    when (i.U<(l-r-1.U)){
-       op_buffer(r+i.U):=io.cur_op(i)
-       id_buffer(r+i.U):=io.id(i)
-    }
-   }
-    r:=l-1.U
-  }.otherwise{
+  // The ring reserves one slot to distinguish full from empty.
+  val free_entries = l-r-1.U
+  io.in_ready := !io.flush_valid && free_entries >= io.valid_num
+  val in_fire = io.in_valid && io.in_ready
+  when (in_fire){
     for(i<-0 until issueWidth){
-    when (i.U<io.valid_num){
+      when (i.U<io.valid_num){
         op_buffer(r+i.U):=io.cur_op(i)
         id_buffer(r+i.U):=io.id(i)
+      }
     }
-   }
     r:=r+io.valid_num
   }
 

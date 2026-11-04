@@ -101,6 +101,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     flush:=committer.io.out_flush
     flush_val:=committer.io.out_flushval.asSInt
     newaddr:=committer.io.out_newaddr
+    decoder.io.flush_valid := flush
+    decoder.io.out_ready := issuer.io.in_ready
+    issuer.io.in_valid := decoder.io.out_valid
     
     clk:=clk+1.U(32.W)
     
@@ -112,6 +115,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     lsu.io.clear_valid:=false.B
     committer.io.clear_valid:=false.B
     issuer.io.valid_num:=0.U
+    decoder.io.in_valid:=false.B
     decoder.io.valid_num:=0.U
 
     for (i<-0 until issueWidth){
@@ -294,36 +298,42 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     when (pc.value(3,2)===l.U){
                         for (i<-0 until issueWidth){
                             hits(i+1) := Mux(hits(i)===i.U,(i+1).U,hits(i))
-                            decoder.io.id((l+i)%issueWidth):=pc.value+(4*i).U
-                            decoder.io.opcode((l+i)%issueWidth):=Icache((l+i)%issueWidth).io.out_rdata
+                            // Decoder 的有效指令始终紧凑地位于 0..valid_num-1。
+                            decoder.io.id(i):=pc.value+(4*i).U
+                            decoder.io.opcode(i):=Icache((l+i)%issueWidth).io.out_rdata
                             hits(i+1) := Mux(Icache((l+i)%issueWidth).io.out_hit===true.B&&hits(i)===i.U,(i+1).U, hits(i))
                         }
                     }
                 }
                 decoder.io.valid_num := hits(issueWidth)
+                decoder.io.in_valid := hits(issueWidth) =/= 0.U
                 when (hits(issueWidth)===0.U&&Dcache_waiting===false.B&&Dcache.io.out_wvalid===false.B&&lsu_waiting===0.U&&lsu.lsuIO.out_valid===false.B){//read instructions from memory
                     io.araddr:=pc.value
                     io.arvalid:=true.B
                     fetcher_waiting:=1.U
                     fetcher_next:=1.U
                 }
-                new_pc_val := pc.value+(hits(issueWidth)<<2.U)
+                when (decoder.io.in_valid && decoder.io.in_ready) {
+                    new_pc_val := pc.value+(hits(issueWidth)<<2.U)
+                }
             }.elsewhen(fetcher_waiting===1.U){
                     when (io.arready===true.B){
                         fetcher_waiting:=2.U
                         fetcher_next:=2.U
-                        io.rready:=true.B
+                        io.rready:=decoder.io.in_ready
                     }.otherwise{
                         io.araddr:=pc.value
                         io.arvalid:=true.B
                     }
                 }.elsewhen(fetcher_waiting===2.U){
-                    when (io.rvalid===true.B){
+                    decoder.io.valid_num:=1.U
+                    decoder.io.id(0):=pc.value
+                    decoder.io.opcode(0):=io.rdata
+                    decoder.io.in_valid:=io.rvalid
+                    io.rready:=decoder.io.in_ready
+                    when (io.rvalid===true.B&&decoder.io.in_ready===true.B){
                         fetcher_waiting:=0.U
                         fetcher_next:=0.U
-                        decoder.io.valid_num:=1.U
-                        decoder.io.id(0):=pc.value
-                        decoder.io.opcode(0):=io.rdata
                         new_pc_val:=pc.value+4.U
                         //write in Icache
                         for (i<-0 until issueWidth)
@@ -334,8 +344,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                                 Icache(i).io.new_data := io.rdata
                             }
                         }
-                    }.otherwise{
-                        io.rready:=true.B
                     }
                 }
 
@@ -372,7 +380,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         (decoder.io.out_id(i).asSInt +
                             decoder.io.out_op(i).r1.asSInt).asUInt
                     )
-                    when (i.U < decoder.io.out_num && !prior_control &&
+                    when (decoder.io.out_valid && i.U < decoder.io.out_num && !prior_control &&
                         (is_jal || (is_branch && predictor.io.out(i)(0).asBool))) {
                         predicted_redirect := true.B
                         predicted_pc := target
@@ -382,6 +390,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     new_pc_val := predicted_pc
                     fetcher_waiting := 0.U
                     fetcher_next := 0.U
+                    decoder.io.in_valid := false.B
                     for (i<-0 until issueWidth){
                         Icache(i).io.clear_status := true.B
                     }
@@ -456,6 +465,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     new_pc_val:= issuer.io.out_new_pc_val
                     fetcher_waiting:=0.U
                     fetcher_next:=0.U
+                    decoder.io.in_valid:=false.B
                     for (i<-0 until issueWidth){
                         Icache(i).io.clear_status:=true.B
                     }
@@ -533,12 +543,12 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         lsu_waiting:=2.U
                     }
                 }.elsewhen(lsu_waiting===2.U&&fetcher_next===0.U){
+                    // arready only acknowledges a request asserted in this cycle.
+                    io.araddr:=lsu_lst_addr
+                    io.arvalid:=true.B
                     when (io.arready===true.B){
                         io.rready:=true.B
                         lsu_waiting:=3.U
-                    }.otherwise{
-                        io.araddr:=lsu_lst_addr
-                        io.arvalid:=true.B
                     }
                 }.otherwise{
                     when (io.rvalid===true.B){

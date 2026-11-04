@@ -17,16 +17,24 @@ import Config.CPUConfig.issueWidth
 
 class Decoder extends Module{
     val io=IO(new Bundle{
+        val in_valid = Input(Bool())
+        val in_ready = Output(Bool())
         val valid_num = Input(UInt(32.W))
         val id = Input(Vec(issueWidth, UInt(32.W)))
         val opcode = Input(Vec(issueWidth, UInt(32.W)))
+
+        val flush_valid = Input(Bool())
+        val out_valid = Output(Bool())
+        val out_ready = Input(Bool())
         val out_num = Output(UInt(32.W))
         val out_id = Output(Vec(issueWidth, UInt(32.W)))
         val out_op = Output(Vec(issueWidth, new Op))
     })
     //init
+    val occupied = RegInit(false.B)
     val valid_num_reg=RegInit(0.U(32.W))
     val opcode_reg=Reg(Vec(issueWidth,UInt(32.W)))
+    val id_reg=Reg(Vec(issueWidth,UInt(32.W)))
     // All signed immediates leave the decoder as complete 32-bit two's
     // complement values. Consumers can therefore use the field directly.
     def signExtend(value: UInt): UInt =
@@ -55,12 +63,31 @@ class Decoder extends Module{
             instruction(30,21),
             0.U(1.W),
         ))
+    // One-entry elastic buffer between the fetcher and the issuer queue.
+    io.in_ready := !io.flush_valid && (!occupied || io.out_ready)
+    io.out_valid := occupied && !io.flush_valid
+    val in_fire = io.in_valid && io.in_ready
+    val out_fire = io.out_valid && io.out_ready
+    when (io.flush_valid) {
+        occupied := false.B
+        valid_num_reg := 0.U
+    }.otherwise {
+        // Draining first lets the same edge replace the old payload.
+        when (out_fire) {
+            occupied := false.B
+        }
+        when (in_fire) {
+            valid_num_reg := io.valid_num
+            opcode_reg := io.opcode
+            id_reg := io.id
+            occupied := true.B
+        }
+    }
+
     //decode
-    valid_num_reg:=io.valid_num//wait for a cycle
     io.out_num:=valid_num_reg
     for (i<-0 until issueWidth){
-        opcode_reg(i):=io.opcode(i)
-        io.out_id(i):=RegNext(io.id(i))
+        io.out_id(i):=id_reg(i)
         io.out_op(i).id:=0.U(32.W)
         // Invalid instructions and unsupported opcodes must still produce a
         // deterministic, inert decode result.
