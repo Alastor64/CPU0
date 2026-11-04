@@ -410,6 +410,8 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     }
   // Commit 侧只负责丢弃预测错误路径；下一取指 PC 由 Fetcher 管理。
   when (io.flush_valid===true.B){
+    // flush 必须覆盖本周期由旧队列项产生的发射结果。
+    io.out_valid:=0.U
     l:=0.U
     r:=0.U
   }
