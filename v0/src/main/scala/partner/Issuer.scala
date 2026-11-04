@@ -121,7 +121,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     // Chisel uses the last connection, so initialise the whole
                     // bundle before assigning the fields that carry meaning.
                     rs:=0.U.asTypeOf(rs)
-                    rs.type_ := op_buffer(startingPoint+i.U).type_
+                    // Snapshot every decoded field from the same queue entry.
+                    val queuedOp = op_buffer(startingPoint+i.U)
+                    rs.type_ := queuedOp.type_
                     rs.id:= clk+i.U
                     rs.q1:= (-1).S
                     rs.q2:= (-1).S
@@ -146,9 +148,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     executer_type:=0.U
                     has_temp1:=false.B
                     has_temp2:=false.B
-                    rd:=io.cur_op(l+i.U).rd
-                    r1:=io.cur_op(l+i.U).r1
-                    r2:=io.cur_op(l+i.U).r2
+                    rd:=queuedOp.rd
+                    r1:=queuedOp.r1
+                    r2:=queuedOp.r2
                     for (j<-0 until ROBWidth){
                         when (io.robs(j).ready===true.B&&io.robs(j).id===prods(i)(r1).asUInt){
                             temp1:=io.robs(j).value
