@@ -232,7 +232,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 rob.dest:=rd.asSInt
                             }
                         }
-                        is(OP_TYPE.OP_LB, OP_TYPE.OP_LH, OP_TYPE.OP_LHU, OP_TYPE.OP_LW){
+                        is(OP_TYPE.OP_LB, OP_TYPE.OP_LBU, OP_TYPE.OP_LH, OP_TYPE.OP_LHU, OP_TYPE.OP_LW){
                             when (spaces(i*(ALU_NUM+2)+ALU_NUM)===io.executer_space(ALU_NUM)){
                                 halt:=1.U
                             }.otherwise{
