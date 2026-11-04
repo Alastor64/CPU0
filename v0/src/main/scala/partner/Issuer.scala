@@ -330,7 +330,10 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                         is(OP_TYPE.OP_JALR){
                             // JALR 的目标依赖 rs1，无法在取指阶段确定，
                             // 因此由 Issue 在操作数就绪后发起一次重定向。
-                            when (alu_id===ALU_NUM.U||(rd=/=r1&&prods(i)(r1)=/=(-1).S&&has_temp1===false.B)){//full alu or not clear rs1
+                            // rd == rs1 只意味着先读旧值、后写新值，不能改变
+                            // rs1 的就绪条件，也不能把返回地址当作跳转基址。
+                            val rs1Pending = prods(i)(r1) =/= (-1).S(32.W)
+                            when (alu_id===ALU_NUM.U||(rs1Pending&&has_temp1===false.B)){//full alu or not clear rs1
                                 halt:=1.U
                             }.otherwise{
                                 rs.v1:=id_buffer(startingPoint+i.U)+4.U
@@ -340,16 +343,13 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 executer_type:=alu_id
                                 rob.id:=clk+i.U
                                 rob.dest:=rd.asSInt
-                                when (rd===r1)
-                                {
-                                    io.out_new_pc_val:=(id_buffer(startingPoint+i.U).asSInt+4.S+r2.asSInt).asUInt
-                                }.elsewhen (prods(i)(r1)=== -1.S(32.W))
-                                {
-                                    io.out_new_pc_val:=(io.reg(r1).value.asSInt+r2.asSInt).asUInt
-                                }.otherwise
-                                {
-                                    io.out_new_pc_val:=(temp1.asSInt+r2.asSInt).asUInt
-                                }
+                                val rs1Value = Mux(
+                                    rs1Pending,
+                                    temp1,
+                                    io.reg(r1).value
+                                )
+                                // JALR 的目标始终使用旧 rs1，并按 ISA 清除 bit 0。
+                                io.out_new_pc_val:=(rs1Value.asSInt+r2.asSInt).asUInt & "hfffffffe".U
                                 io.out_pc_val_changed:=true.B
                                 halt:=2.U
                             }
