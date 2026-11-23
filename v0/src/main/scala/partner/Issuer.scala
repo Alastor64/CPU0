@@ -95,6 +95,8 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     prods(0)(j):=io.reg(j).prod
     io.out_prod_valid(j):=false.B
   }
+  // x0 是常量零，永远没有生产者；同时屏蔽历史上可能残留的 tag。
+  prods(0)(0):=(-1).S(32.W)
 //multi issuing
  val canOperate = Wire(Bool())
  val startingPoint = Wire(UInt(4.W))
@@ -381,6 +383,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }
                         }
                     }
+                    // 写入 x0 不产生体系结构副作用，不能让后续指令等待它。
+                    prods(i+1)(0):=(-1).S(32.W)
+                    io.out_prod_valid(0):=false.B
                     io.out_executer_type(i):=executer_type
                     io.out_executer_RS(i):=rs
                     io.out_ROB(i):=rob
