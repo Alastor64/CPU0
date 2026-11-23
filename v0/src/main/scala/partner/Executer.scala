@@ -181,7 +181,8 @@ class Mult extends Module{
     adder4.io.a:=RegNext(adder3.io.sum)
     adder4.io.b:=Cat(0.U(16.W),RegNext(p10(31,16)))
 
-    io.c:=Mux(RegNext(RegNext(io.op)),adder2.io.sum,adder4.io.sum)
+    // op=0 选择低 32 位，op=1 选择高 32 位。
+    io.c:=Mux(RegNext(RegNext(io.op)),adder4.io.sum,adder2.io.sum)
     io.ready:=0.U
     io.received:=0.U
     when (io.clear_valid)
