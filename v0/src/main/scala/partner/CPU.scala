@@ -623,6 +623,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     when (lsu.lsuIO.out_valid===true.B&&Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B&&committer_waiting===0.U&&committer.io.out_store_valid===false.B){//can load only when no store
                         Dcache.io.load_valid:=true.B
                         Dcache.io.addr := lsu.lsuIO.out_addr
+                        // Load miss 的返回值是完整 32 位字，回填四个字节。
+                        Dcache.io.wmask := 15.U
                         lsu_lst_addr := lsu.lsuIO.out_addr
                         lsu_waiting:=1.U
                         lsu.lsuIO.addr_received:=true.B
