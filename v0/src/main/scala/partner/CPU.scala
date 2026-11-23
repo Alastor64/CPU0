@@ -246,6 +246,20 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val committer_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for Dcache write back
     val Dcache_waiting = RegInit(0.U(2.W))
 
+    // Exit stores bypass the D-cache. Capture the complete store payload at
+    // commit time, then let the small state machine below drain it through AXI.
+    // Keeping the address and data registered also holds AW/W stable while the
+    // corresponding ready signal is low.
+    val exit_store_pending = RegInit(false.B)
+    val exit_store_addr = RegInit(0.U(32.W))
+    val exit_store_data = RegInit(0.U(32.W))
+    val exit_store_mask = RegInit(0.U(4.W))
+    val exit_store_aw_done = RegInit(false.B)
+    val exit_store_w_done = RegInit(false.B)
+    val exit_store_commit =
+        committer.io.out_store_valid === true.B &&
+        committer.io.out_store_addr === "h80000000".U
+
     hits := 0.U.asTypeOf(hits)
     fetcher_next := 0.U
     new_pc_val := 0.U
@@ -259,11 +273,25 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         Mux(issuer.io.out_pc_val_changed, issuer.io.out_new_pc_val, predicted_pc)
     )
 
-    when (halt===false.B){
+    // Capture only after the store reaches the commit point, so a store on a
+    // mispredicted path can never terminate the program.
+    when (exit_store_commit && exit_store_pending===false.B){
+        exit_store_pending:=true.B
+        exit_store_addr:=committer.io.out_store_addr
+        exit_store_data:=committer.io.out_store_value
+        exit_store_mask:=committer.io.out_store_mask
+        exit_store_aw_done:=false.B
+        exit_store_w_done:=false.B
+    }
+
+    // D-cache write back is kept outside the normal execution branch so an
+    // already-pending dirty line can still drain after the CPU enters exit mode.
+    when (halt===false.B||exit_store_pending===true.B){
         //Dcache write back  
         when (Dcache_waiting===0.U)
         {
-            when (Dcache.io.out_wvalid===true.B&&fetcher_waiting===0.U&&lsu_waiting===0.U)
+            when (Dcache.io.out_wvalid===true.B&&
+                (exit_store_pending===true.B||(fetcher_waiting===0.U&&lsu_waiting===0.U)))
             {//definitely happens, no need to worry about rolling back
                 io.awaddr:=Dcache.io.out_waddr
                 io.wdata:=Dcache.io.out_wdata
@@ -291,8 +319,34 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 Dcache_waiting:=0.U
             }
         }
+    }
 
+    when (exit_store_pending===true.B){
+        // The normal pipeline is stopped, but old read responses still need to
+        // be consumed. The Committer also needs to see this uncached store as
+        // complete instead of waiting forever for a D-cache acknowledgement.
+        io.rready:=true.B
+        committer.io.store_received:=true.B
 
+        // Do not contend with a D-cache writeback on the AXI write channels.
+        when (Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B){
+            when (exit_store_aw_done===false.B){
+                io.awaddr:=exit_store_addr
+                io.awvalid:=true.B
+                when (io.awready===true.B){
+                    exit_store_aw_done:=true.B
+                }
+            }
+            when (exit_store_w_done===false.B){
+                io.wdata:=exit_store_data
+                io.wstrb:=exit_store_mask
+                io.wvalid:=true.B
+                when (io.wready===true.B){
+                    exit_store_w_done:=true.B
+                }
+            }
+        }
+    }.elsewhen (halt===false.B){
         // Committer 产生的 flush 是最高优先级的 redirect。若此前 AR 已握手，
         // AXI 没有取消机制；清 Cache 状态不能代替等待并排空对应的 R 响应。
         when (flush===true.B){//flush
@@ -734,7 +788,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 //committer
                 committer.io.store_received:=false.B
                 when (committer_waiting===0.U){
-                    when (committer.io.out_store_valid===true.B&&Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B){//store
+                    when (committer.io.out_store_valid===true.B&&exit_store_commit===false.B&&
+                        Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B){//store
                         Dcache.io.store_valid := true.B
                         Dcache.io.addr := committer.io.out_store_addr
                         Dcache.io.wdata := committer.io.out_store_value
