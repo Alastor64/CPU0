@@ -640,8 +640,15 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         {
                             io.araddr:=lsu_lst_addr
                             io.arvalid:=true.B
+                            when (io.arready===true.B) {
+                                io.rready:=true.B
+                                lsu_waiting:=3.U
+                            }.otherwise {
+                                lsu_waiting:=2.U
+                            }
+                        }.otherwise {
+                            lsu_waiting:=2.U
                         }
-                        lsu_waiting:=2.U
                     }
                 }.elsewhen(lsu_waiting===2.U&&fetcher_next===0.U){
                     // arready only acknowledges a request asserted in this cycle.
