@@ -173,7 +173,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         alus(i).io.valid_num := 0.U
         alus(i).io.rs := 0.U.asTypeOf(alus(i).io.rs)
         alus(i).io.cdbs := 0.U.asTypeOf(alus(i).io.cdbs)
-        alus(i).io.clear_id := 0.S
         alus(i).aluIO.mult_valid := 0.U
         alus(i).aluIO.mult_res := 0.U
         alus(i).aluIO.mult_received := 0.U
@@ -185,7 +184,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     lsu.io.valid_num := 0.U
     lsu.io.rs := 0.U.asTypeOf(lsu.io.rs)
     lsu.io.cdbs := 0.U.asTypeOf(lsu.io.cdbs)
-    lsu.io.clear_id := 0.S
     lsu.lsuIO.robs := 0.U.asTypeOf(lsu.lsuIO.robs)
     lsu.lsuIO.l := 0.U
     lsu.lsuIO.r := 0.U
@@ -196,7 +194,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     bru.io.valid_num := 0.U
     bru.io.rs := 0.U.asTypeOf(bru.io.rs)
     bru.io.cdbs := 0.U.asTypeOf(bru.io.cdbs)
-    bru.io.clear_id := 0.S
 
     committer.io.valid_num := 0.U
     committer.io.in_robs := 0.U.asTypeOf(committer.io.in_robs)
@@ -366,14 +363,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             for (i<-0 until ALU_NUM)
             {
                 alus(i).io.clear_valid:=true.B
-                alus(i).io.clear_id:=flush_val
             }
             mult.io.clear_valid:=true.B
             div.io.clear_valid:=true.B
             bru.io.clear_valid:=true.B
-            bru.io.clear_id:=flush_val
             lsu.io.clear_valid:=true.B
-            lsu.io.clear_id:=flush_val
             for (i<-0 until 32){
                 when (regs(i).prod>flush_val){
                     regs(i).prod := -1.S(32.W)

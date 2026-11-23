@@ -267,21 +267,19 @@ class Divider extends Module{//unsigned
 
 
 
-class Executer extends Module{
+class Executer(val rsDepth: Int = RSWidth) extends Module{
   val io = IO(new Bundle {
     val valid_num = Input(UInt(32.W))
     val rs = Input(Vec(issueWidth,new RS))
     val cdbs = Input(Vec(ALU_NUM+2,new CDB))
 
     val clear_valid = Input(Bool())
-    val clear_id = Input(SInt(32.W))
 
     val out_cdb = Output(new CDB)
     val out_space = Output(UInt(32.W))
     val in_ready = Output(Bool())
   })
 
-  private val rsDepth = RSWidth
   private val rsIndexBits = log2Ceil(rsDepth)
   private val rsCountBits = log2Ceil(rsDepth + 1)
   private val idWidth = 32
@@ -474,7 +472,7 @@ class Executer extends Module{
   }
 }
 
-class ALU(val id: Int) extends Executer {
+class ALU(val id: Int, rsDepth: Int = RSWidth) extends Executer(rsDepth) {
   val aluIO= IO(new Bundle {
     val mult_valid = Input(UInt(32.W))
     val mult_res = Input(UInt(32.W))
@@ -706,7 +704,7 @@ class ALU(val id: Int) extends Executer {
   }
 }
 
-class LSU extends Executer{
+class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
   val lsuIO= IO(new Bundle {
     val robs = Input(Vec(ROBWidth,new ROB))
     val l = Input(UInt(4.W))
@@ -844,7 +842,7 @@ class LSU extends Executer{
 }
 
 
-class BRU extends Executer{
+class BRU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
   val res=Wire(Bool())
   res:=false.B
   when (io.clear_valid===false.B)

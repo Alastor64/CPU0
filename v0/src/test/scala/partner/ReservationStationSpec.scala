@@ -10,17 +10,17 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 /** 测试专用的 ALU，仅把保留站内部状态引出为可观察端口。 */
-private class ProbeALU extends ALU(0) {
+private class ProbeALU(val probeDepth: Int = RSWidth) extends ALU(0, probeDepth) {
   val probe = IO(Output(new Bundle {
-    val freeCount = UInt(log2Ceil(RSWidth + 1).W)
-    val valid = Vec(RSWidth, Bool())
-    val ids = Vec(RSWidth, UInt(32.W))
+    val freeCount = UInt(log2Ceil(probeDepth + 1).W)
+    val valid = Vec(probeDepth, Bool())
+    val ids = Vec(probeDepth, UInt(32.W))
     val selected = Bool()
     val selectedId = UInt(32.W)
   }))
   probe.freeCount := freeCount
   probe.valid := valid
-  for (i <- 0 until RSWidth) {
+  for (i <- 0 until probeDepth) {
     probe.ids(i) := rss(i).id
   }
   probe.selected := start_process
@@ -33,7 +33,6 @@ class ReservationStationSpec extends AnyFlatSpec with Matchers {
   private def pokeIdle(dut: ProbeALU): Unit = {
     dut.io.valid_num.poke(0.U)
     dut.io.clear_valid.poke(false.B)
-    dut.io.clear_id.poke(0.S)
     for (i <- 0 until issueWidth) {
       dut.io.rs(i).type_.poke(OP_TYPE.OP_NONE)
       dut.io.rs(i).v1.poke(0.U)
@@ -132,6 +131,28 @@ class ReservationStationSpec extends AnyFlatSpec with Matchers {
       dut.probe.valid(1).expect(true.B)
       dut.probe.ids(1).expect(20.U)
       dut.probe.selectedId.expect(20.U)
+    }
+  }
+
+  it should "derive all widths and capacity from the configured depth" in {
+    simulate(new ProbeALU(4)) { dut =>
+      resetDut(dut)
+      dut.probe.freeCount.expect(4.U)
+      dut.io.out_space.expect(4.U)
+      dut.io.in_ready.expect(true.B)
+
+      pokeIdle(dut)
+      dut.io.valid_num.poke(4.U)
+      for (i <- 0 until 4) {
+        pokeEntry(dut, i, id = i, q1 = 7)
+      }
+      dut.clock.step()
+
+      dut.probe.freeCount.expect(0.U)
+      dut.io.in_ready.expect(false.B)
+      for (i <- 0 until 4) {
+        dut.probe.valid(i).expect(true.B)
+      }
     }
   }
 
