@@ -227,12 +227,19 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     // redirect/flush 只能在确认没有未完成读事务时直接清零；否则必须先排空
     // 旧请求，避免把旧地址的 rdata 配给重定向后的新 PC。
     val fetcher_waiting = RegInit(0.U(2.W))
+    // redirect 到达时若仍有 AXI 读事务，先记住目标，事务排空后再更新 PC。
+    val fetcher_redirect_pending = RegInit(false.B)
+    val fetcher_redirect_pc = Reg(UInt(32.W))
 
     // hits 是从当前 PC 开始、连续命中的指令数，而不是整组命中总数。
     val hits = Wire(Vec(issueWidth+1,UInt(3.W)))
 
     // 本拍组合决定的 Fetcher 下一状态，同时用于判断是否继续预查 Icache。
     val fetcher_next = Wire(UInt(2.W))
+    val predicted_redirect = Wire(Bool())
+    val predicted_pc = Wire(UInt(32.W))
+    val fetcher_redirect = Wire(Bool())
+    val fetcher_redirect_target = Wire(UInt(32.W))
     val lsu_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for memory, 3 got memory, storing into Dcache
     val lsu_lst_addr=Reg(UInt(32.W))
     val committer_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for Dcache write back
@@ -241,6 +248,15 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     hits := 0.U.asTypeOf(hits)
     fetcher_next := 0.U
     new_pc_val := 0.U
+    predicted_redirect := false.B
+    predicted_pc := 0.U
+    // Committer flush 的优先级最高，其次是 Issuer 的 JALR redirect，最后是取指预测。
+    fetcher_redirect := flush || issuer.io.out_pc_val_changed || predicted_redirect
+    fetcher_redirect_target := Mux(
+        flush,
+        newaddr,
+        Mux(issuer.io.out_pc_val_changed, issuer.io.out_new_pc_val, predicted_pc)
+    )
 
     when (halt===false.B){
         //Dcache write back  
@@ -281,7 +297,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         when (flush===true.B){//flush
             issuer.io.flush_valid:=true.B
             issuer.io.valid_num:=0.U
-            pc.value:=newaddr
             for (i<-0 until ALU_NUM)
             {
                 alus(i).io.clear_valid:=true.B
@@ -299,7 +314,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 }
             }
             committer.io.clear_valid:=true.B
-            fetcher_waiting:=0.U
             lsu_waiting:=0.U
             committer_waiting:=0.U
             Dcache_waiting:=0.U
@@ -309,6 +323,28 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             }
             Dcache.io.clear_status:=true.B
 
+            // AXI 读一旦发出就不能撤销。保持旧 AR 稳定并排空旧 R，
+            // 等最后一个响应握手后才在下一拍切换到 newaddr。
+            when (fetcher_waiting===0.U) {
+                pc.value:=newaddr
+                fetcher_redirect_pending:=false.B
+            }.otherwise {
+                fetcher_redirect_pending:=true.B
+                fetcher_redirect_pc:=newaddr
+                when (fetcher_waiting===1.U) {
+                    io.araddr:=pc.value
+                    io.arvalid:=true.B
+                    when (io.arready===true.B) {
+                        fetcher_waiting:=2.U
+                    }
+                }.otherwise {
+                    io.rready:=true.B
+                    when (io.rvalid===true.B) {
+                        fetcher_waiting:=0.U
+                    }
+                }
+            }
+
             flush:=false.B
         }.otherwise{//main cycle
             // ==================== Fetcher: 正常取指 ====================
@@ -316,8 +352,13 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             fetcher_next:=fetcher_waiting
             new_pc_val:=pc.value
 
-            // 状态 0：在本拍检查 Icache。
-            when(fetcher_waiting===0.U)
+            when(fetcher_waiting===0.U && fetcher_redirect_pending===true.B)
+            {
+                // 旧的 AXI 事务已经排空，现在可以安全切到 redirect 目标。
+                fetcher_redirect_pending:=false.B
+                new_pc_val:=fetcher_redirect_pc
+                decoder.io.in_valid:=false.B
+            }.elsewhen(fetcher_waiting===0.U)
             {
                 hits(0):=0.U
 
@@ -337,11 +378,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }
                 }
                 decoder.io.valid_num := hits(issueWidth)
-                decoder.io.in_valid := hits(issueWidth) =/= 0.U
+                decoder.io.in_valid := hits(issueWidth) =/= 0.U && !fetcher_redirect
 
                 // 首字 miss 时从内存取一条指令。Fetcher 与 LSU/Dcache
                 // 共享 AXI 读通道，因此必须先确认其他读事务和写回路径空闲。
-                when (hits(issueWidth)===0.U&&Dcache_waiting===false.B&&Dcache.io.out_wvalid===false.B&&lsu_waiting===0.U&&lsu.lsuIO.out_valid===false.B){//read instructions from memory
+                when (hits(issueWidth)===0.U && !fetcher_redirect && Dcache_waiting===false.B&&Dcache.io.out_wvalid===false.B&&lsu_waiting===0.U&&lsu.lsuIO.out_valid===false.B){//read instructions from memory
                     io.araddr:=pc.value
                     io.arvalid:=true.B
                     // AR 可能在发请求的同一拍完成握手；只有未握手时才保持状态 1。
@@ -356,7 +397,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
                 // Decoder 接收整组指令后，PC 跳过所有已经交付的前缀命中项。
                 // Decoder 不 ready 时保持 PC 不变，实现 fetch->decode 反压。
-                when (decoder.io.in_valid && decoder.io.in_ready) {
+                when (decoder.io.in_valid && decoder.io.in_ready && !fetcher_redirect) {
                     new_pc_val := pc.value+(hits(issueWidth)<<2.U)
                 }
             }.elsewhen(fetcher_waiting===1.U){
@@ -365,33 +406,37 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     when (io.arready===true.B){
                         fetcher_waiting:=2.U
                         fetcher_next:=2.U
-                        io.rready:=decoder.io.in_ready
+                        io.rready:=fetcher_redirect_pending||fetcher_redirect||decoder.io.in_ready
                     }.otherwise{
                         io.araddr:=pc.value
                         io.arvalid:=true.B
                     }
                 }.elsewhen(fetcher_waiting===2.U){
-                    // 状态 2：等待 R。RREADY 跟随 Decoder 的反压，
-                    // 因此内存数据返回后仍可安全等待 Decoder 腾出空间。
-                    decoder.io.valid_num:=1.U
+                    // 状态 2：正常取指时 RREADY 跟随 Decoder 的反压；
+                    // 若正在 redirect，则无条件接收并丢弃旧响应。
+                    val fetcher_discard = fetcher_redirect_pending||fetcher_redirect
+                    decoder.io.valid_num:=Mux(fetcher_discard,0.U,1.U)
                     decoder.io.id(0):=pc.value
                     decoder.io.opcode(0):=io.rdata
-                    decoder.io.in_valid:=io.rvalid
-                    io.rready:=decoder.io.in_ready
+                    decoder.io.in_valid:=io.rvalid && !fetcher_discard
+                    val fetcher_accept = fetcher_discard||decoder.io.in_ready
+                    io.rready:=fetcher_accept
 
-                    // R 握手成功后，该指令进入 Decoder、写入对应 Icache，
-                    // PC 前进一个字并回到状态 0。
-                    when (io.rvalid===true.B&&decoder.io.in_ready===true.B){
+                    // R 握手成功后返回状态 0。正常路径还要把指令交给
+                    // Decoder 和 Icache；redirect 路径只负责排空旧响应。
+                    when (io.rvalid===true.B&&fetcher_accept===true.B){
                         fetcher_waiting:=0.U
                         fetcher_next:=0.U
-                        new_pc_val:=pc.value+4.U
-                        //write in Icache
-                        for (i<-0 until issueWidth)
-                        {//other Icaches no longer need to wait for new_data
-                            when (pc.value(3,2)===i.U)
-                            {
-                                Icache(i).io.new_valid := true.B
-                                Icache(i).io.new_data := io.rdata
+                        when (!fetcher_discard) {
+                            new_pc_val:=pc.value+4.U
+                            //write in Icache
+                            for (i<-0 until issueWidth)
+                            {//other Icaches no longer need to wait for new_data
+                                when (pc.value(3,2)===i.U)
+                                {
+                                    Icache(i).io.new_valid := true.B
+                                    Icache(i).io.new_data := io.rdata
+                                }
                             }
                         }
                     }
@@ -410,10 +455,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         op === OP_TYPE.OP_BLTU || op === OP_TYPE.OP_BNE ||
                         op === OP_TYPE.OP_JAL || op === OP_TYPE.OP_JALR
                 })
-                val predicted_redirect = Wire(Bool())
-                val predicted_pc = Wire(UInt(32.W))
-                predicted_redirect := false.B
-                predicted_pc := 0.U
                 // 逆序搜索并依赖 Chisel 后写覆盖，使程序顺序最靠前的控制
                 // 指令最终胜出；prior_control 阻止同一组中后面的控制指令覆盖它。
                 for (i<-issueWidth-1 to 0 by -1){
@@ -438,18 +479,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }
                 }
 
-                // 预测 taken 或执行 JAL 时，从目标地址重新开始取指。
-                // 当前控制指令仍需继续进入后端；之后发现预测错误时由
-                // Committer 的 flush 丢弃错误路径。
-                when (predicted_redirect) {
-                    new_pc_val := predicted_pc
-                    fetcher_waiting := 0.U
-                    fetcher_next := 0.U
-                    decoder.io.in_valid := false.B
-                    for (i<-0 until issueWidth){
-                        Icache(i).io.clear_status := true.B
-                    }
-                }
                 //handling issuer input
                 issuer.io.valid_num:=decoder.io.out_num
                 issuer.io.id:=decoder.io.out_id
@@ -515,13 +544,17 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 for (i<-0 until 32){
                     regs(i).prod:=issuer.io.out_prod(i)
                 }
-                // JALR 等依赖运行时操作数的跳转在 Issuer 中解析，产生
-                // 后端 redirect。它覆盖本拍较早计算出的预测目标。
-                when (issuer.io.out_pc_val_changed===true.B)
-                {
-                    new_pc_val:= issuer.io.out_new_pc_val
-                    fetcher_waiting:=0.U
-                    fetcher_next:=0.U
+                // redirect 在空闲时直接切 PC；存在在途读时只记录目标，
+                // 由上面的 Fetch 状态机在 AR/R 排空后应用。
+                when (fetcher_redirect) {
+                    when (fetcher_waiting===0.U) {
+                        new_pc_val:=fetcher_redirect_target
+                        fetcher_redirect_pending:=false.B
+                        fetcher_next:=0.U
+                    }.otherwise {
+                        fetcher_redirect_pending:=true.B
+                        fetcher_redirect_pc:=fetcher_redirect_target
+                    }
                     decoder.io.in_valid:=false.B
                     for (i<-0 until issueWidth){
                         Icache(i).io.clear_status:=true.B
@@ -532,7 +565,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
                 // 状态 0 时提前为 new_pc_val 连续四个字发起 Icache 查询。
                 // 下一拍状态 0 使用这些查询结果计算前缀命中数。
-                when (fetcher_next===0.U)
+                when (fetcher_next===0.U && !fetcher_redirect_pending &&
+                    (!fetcher_redirect||fetcher_waiting===0.U))
                 {
                     for (l<-0 until issueWidth){
                         when (new_pc_val(3,2)===l.U){
@@ -625,6 +659,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }.otherwise{
                         io.rready:=true.B
                     }
+                }
+                // Fetch 拥有唯一的读事务时，不能让后续 LSU 仲裁覆盖 RREADY。
+                // 这里只依赖状态寄存器，避免形成 rready -> fetcher_next 的组合环。
+                when (fetcher_waiting===2.U) {
+                    io.rready:=fetcher_redirect_pending||fetcher_redirect||decoder.io.in_ready
                 }
 
                 //broadcast CDBs
