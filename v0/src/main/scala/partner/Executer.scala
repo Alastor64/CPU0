@@ -278,110 +278,199 @@ class Executer extends Module{
 
     val out_cdb = Output(new CDB)
     val out_space = Output(UInt(32.W))
+    val in_ready = Output(Bool())
   })
-  val l = RegInit(0.U(4.W))
-  val r = RegInit(0.U(4.W))
-  val rss = Reg(Vec(8, new RS()))
+
+  private val rsDepth = RSWidth
+  private val rsIndexBits = log2Ceil(rsDepth)
+  private val rsCountBits = log2Ceil(rsDepth + 1)
+  private val idWidth = 32
+
+  /**
+    * 在有限数量未完成指令的窗口中，按 32 位回绕差值判断发射年龄。
+    * 不能直接使用无符号 `<`，否则跨过 0xffffffff 时会把新指令误判为旧指令。
+    */
+  private def isOlder(a: UInt, b: UInt): Bool =
+    (a - b)(idWidth - 1).asBool
+
+  // 空闲槽位由 valid bitmap 表示，不再通过整项搬运维持连续队列。
+  val rss = Reg(Vec(rsDepth, new RS()))
+  val valid = RegInit(VecInit(Seq.fill(rsDepth)(false.B)))
+  val freeCount = RegInit(rsDepth.U(rsCountBits.W))
   val cur_rs = Reg(new RS)
   val in_process=RegInit(false.B)
   val temp_rs=Wire(new RS)
-  val selected=Wire(Vec(RSWidth+1,Bool()))
   val init = Wire(new CDB)
   temp_rs:=0.U.asTypeOf(temp_rs)
-  selected:=false.B.asTypeOf(selected)
   init.id :=0.U
   init.dest :=0.S
   init.value :=0.U
   val out_cdb= RegInit(init)
 
-  io.out_space:= (RSWidth-1).U-(r-l)
+  io.in_ready := !io.clear_valid && freeCount >= io.valid_num
+  io.out_space := freeCount
   io.out_cdb:=out_cdb
   val start_process=Wire(Bool())//for telling subclasses to execute rs
   start_process:=false.B
-  //find new instruction to execute
-  when (io.clear_valid===true.B){//flush
-    val newr=Wire(UInt(32.W))
-    newr:=l
-    for (i<-0 until RSWidth){
-      when (i.U<(r-l)&&rss(l+i.U).id.asSInt<=io.clear_id){
-          newr:=l+(i+1).U
+
+  when (!io.clear_valid) {
+    // Issuer 必须保证整组可接收；不允许静默截断，否则 RS、ROB 与 Issuer
+    // 会对同一条指令产生不同的接收结果。
+    assert(
+      freeCount >= io.valid_num,
+      "Executer received more reservation-station entries than free slots"
+    )
+  }
+
+  // 本周期插入的项也要吸收同拍 CDB，否则生产者结果到达的同拍新入队项
+  // 会永久保留过期 q tag。
+  val incomingStages =
+    Wire(Vec(issueWidth, Vec(ALU_NUM+3, new RS)))
+  for (i <- 0 until issueWidth) {
+    incomingStages(i)(0) := io.rs(i)
+    for (j <- 0 until ALU_NUM+2) {
+      incomingStages(i)(j+1) := incomingStages(i)(j)
+      when (incomingStages(i)(j).q1 === io.cdbs(j).id.asSInt) {
+        incomingStages(i)(j+1).q1 := (-1).S
+        incomingStages(i)(j+1).v1 := io.cdbs(j).value
+      }
+      when (incomingStages(i)(j).q2 === io.cdbs(j).id.asSInt) {
+        incomingStages(i)(j+1).q2 := (-1).S
+        incomingStages(i)(j+1).v2 := io.cdbs(j).value
       }
     }
-    r:=newr
+  }
+
+  // 从 bitmap 中为本拍最多 issueWidth 项依次选择空槽。后一项会看到
+  // 前一项已经占用的位置，避免同一槽位在一拍内被分配两次。
+  val freeStage = Wire(Vec(issueWidth+1, Vec(rsDepth, Bool())))
+  for (i <- 0 until rsDepth) {
+    freeStage(0)(i) := !valid(i)
+  }
+  val allocatedSlot = Wire(Vec(issueWidth, UInt(rsIndexBits.W)))
+  for (i <- 0 until issueWidth) {
+    allocatedSlot(i) := PriorityEncoder(freeStage(i))
+    for (j <- 0 until rsDepth) {
+      freeStage(i+1)(j) := freeStage(i)(j) && allocatedSlot(i) =/= j.U
+    }
+  }
+
+  when (io.clear_valid===true.B){//flush
+    // Committer flush 到达时，比触发指令更老的项已经按序提交完成。
+    // 因此保留站可以直接恢复为全空，不需要逐项拼接空闲链表。
+    for (i <- 0 until rsDepth) {
+      valid(i) := false.B
+    }
+    freeCount := rsDepth.U
     in_process:=false.B
   }.otherwise{
     for (i<-0 until ALU_NUM+2){//receive CDB
-      for (j<-0 until RSWidth)
+      for (j<-0 until rsDepth)
       {
-        when (j.U<(r-l))
+        when (valid(j))
         {
-            when (rss(l+j.U).q1===io.cdbs(i).id.asSInt)
+            when (rss(j).q1===io.cdbs(i).id.asSInt)
             {
-                rss(l+j.U).q1:=(-1).S
-                rss(l+j.U).v1:=io.cdbs(i).value
+                rss(j).q1:=(-1).S
+                rss(j).v1:=io.cdbs(i).value
             }
-            when (rss(l+j.U).q2===io.cdbs(i).id.asSInt)
+            when (rss(j).q2===io.cdbs(i).id.asSInt)
             {
-                rss(l+j.U).q2:=(-1).S
-                rss(l+j.U).v2:=io.cdbs(i).value
+                rss(j).q2:=(-1).S
+                rss(j).v2:=io.cdbs(i).value
             }
         }
       }
     }
+
+    // 只分配周期开始时已经空闲的槽位。本拍弹出的槽位下一拍才可复用，
+    // 使 ready 判断与 Issuer 当前基于 out_space 的容量规划保持一致。
     for (i<-0 until issueWidth){//receiving RS
       when (i.U<io.valid_num){
-        rss(r+i.U):=io.rs(i)
+        rss(allocatedSlot(i)):=incomingStages(i)(ALU_NUM+2)
+        valid(allocatedSlot(i)):=true.B
       }
     }
-    r:=r+io.valid_num
-    when (in_process===false.B)
-    {
-      selected(0):=false.B
-      for (i<-0 until RSWidth)
-      {
-        selected(i+1):=selected(i)
-        when (i.U<(r-l)&&rss(l+i.U).q1=== -1.S&&rss(l+i.U).q2=== -1.S)
-        {
-          val len=Wire(UInt(32.W))
-          val rs=Wire(new RS)
-          val L1=Wire(UInt(32.W))
-          val R1=Wire(UInt(32.W))
-          val flag=Wire(Bool())
-          rs:=rss(l+i.U)
-          len:=Mux(rs.type_ === OP_TYPE.OP_LW,4.U(32.W),Mux(rs.type_ === OP_TYPE.OP_LH||rs.type_ === OP_TYPE.OP_LHU, 2.U(32.W),Mux(rs.type_ === OP_TYPE.OP_LB||rs.type_ === OP_TYPE.OP_LBU,1.U(32.W),0.U(32.W))))
-          L1:=(rs.v1.asSInt+rs.v2.asSInt).asUInt
-          R1:=L1+len
-          flag:=false.B
-          when (len=/=0.U){
-            for (j<-0 until i){
-              val tp=Wire(UInt(32.W))
-              val temp_rs=Wire(new RS)
-              val L2=Wire(UInt(32.W))
-              val R2=Wire(UInt(32.W))
-              temp_rs:=rss(l+j.U)
-              tp := Mux(temp_rs.type_ === OP_TYPE.OP_SB,1.U(32.W),Mux(temp_rs.type_ === OP_TYPE.OP_SH, 2.U(32.W),Mux(temp_rs.type_ === OP_TYPE.OP_SW,4.U(32.W),0.U(32.W))))
-              L2:=(temp_rs.v1.asSInt+temp_rs.dest).asUInt
-              R2:=L2+tp
-              when(tp=/=0.U&&(temp_rs.q1 =/= -1.S||(L2<R1&&L1<R2))){
-                flag:=true.B
-              }
-            }
+
+    // 从所有就绪项中选择发射序号最老的一项。load 还必须等待所有更老
+    // store 的地址和数据就绪，并检查地址区间是否重叠。
+    val candidateReady = Wire(Vec(rsDepth, Bool()))
+    for (i <- 0 until rsDepth) {
+      val rs = rss(i)
+      val loadLen = Mux(
+        rs.type_ === OP_TYPE.OP_LW, 4.U(32.W),
+        Mux(
+          rs.type_ === OP_TYPE.OP_LH || rs.type_ === OP_TYPE.OP_LHU,
+          2.U(32.W),
+          Mux(
+            rs.type_ === OP_TYPE.OP_LB || rs.type_ === OP_TYPE.OP_LBU,
+            1.U(32.W),
+            0.U(32.W)
+          )
+        )
+      )
+      val loadLeft = (rs.v1.asSInt + rs.v2.asSInt).asUInt
+      val loadRight = loadLeft + loadLen
+      val olderStoreStages = Wire(Vec(rsDepth+1, Bool()))
+      olderStoreStages(0) := false.B
+      when (loadLen =/= 0.U) {
+        for (j <- 0 until rsDepth) {
+          val older = rss(j)
+          val storeBytes = Mux(
+            older.type_ === OP_TYPE.OP_SB, 1.U(32.W),
+            Mux(
+              older.type_ === OP_TYPE.OP_SH, 2.U(32.W),
+              Mux(older.type_ === OP_TYPE.OP_SW, 4.U(32.W), 0.U(32.W))
+            )
+          )
+          val storeLeft = (older.v1.asSInt + older.dest).asUInt
+          val storeRight = storeLeft + storeBytes
+          olderStoreStages(j+1) := olderStoreStages(j)
+          when (
+            valid(j) && isOlder(older.id, rs.id) && storeBytes =/= 0.U &&
+              (older.q1 =/= (-1).S || (storeLeft < loadRight && loadLeft < storeRight))
+          ) {
+            olderStoreStages(j+1) := true.B
           }
-          when (selected(i)===false.B&&flag===false.B)
-          {
-            selected(i+1):=true.B
-            temp_rs:=rs
-            cur_rs:=rs
-            for (j<-0 until i){
-              rss(l+(j+1).U):=rss((i+j).U)
-            }
-            l:=l+1.U
-            start_process:=true.B
-            
-          }
-        } 
+        }
+      }.otherwise {
+        for (j <- 0 until rsDepth) {
+          olderStoreStages(j+1) := false.B
+        }
+      }
+      candidateReady(i) :=
+        valid(i) && rs.q1 === (-1).S && rs.q2 === (-1).S &&
+          !olderStoreStages(rsDepth)
+    }
+
+    val bestFound = Wire(Vec(rsDepth+1, Bool()))
+    val bestAge = Wire(Vec(rsDepth+1, UInt(idWidth.W)))
+    val bestSlot = Wire(Vec(rsDepth+1, UInt(rsIndexBits.W)))
+    bestFound(0) := false.B
+    bestAge(0) := 0.U
+    bestSlot(0) := 0.U
+    for (i <- 0 until rsDepth) {
+      bestFound(i+1) := bestFound(i)
+      bestAge(i+1) := bestAge(i)
+      bestSlot(i+1) := bestSlot(i)
+      when (candidateReady(i)) {
+        when (!bestFound(i) || isOlder(rss(i).id, bestAge(i))) {
+          bestFound(i+1) := true.B
+          bestAge(i+1) := rss(i).id
+          bestSlot(i+1) := i.U
+        }
       }
     }
+
+    val selected = !in_process && bestFound(rsDepth)
+    when (selected) {
+      temp_rs := rss(bestSlot(rsDepth))
+      cur_rs := rss(bestSlot(rsDepth))
+      valid(bestSlot(rsDepth)) := false.B
+      start_process := true.B
+    }
+
+    freeCount := freeCount - io.valid_num + Mux(selected, 1.U, 0.U)
   }
 }
 
