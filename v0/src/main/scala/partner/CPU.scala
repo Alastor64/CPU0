@@ -342,8 +342,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 when (hits(issueWidth)===0.U&&Dcache_waiting===false.B&&Dcache.io.out_wvalid===false.B&&lsu_waiting===0.U&&lsu.lsuIO.out_valid===false.B){//read instructions from memory
                     io.araddr:=pc.value
                     io.arvalid:=true.B
-                    fetcher_waiting:=1.U
-                    fetcher_next:=1.U
+                    // AR 可能在发请求的同一拍完成握手；只有未握手时才保持状态 1。
+                    when (io.arready===true.B) {
+                        fetcher_waiting:=2.U
+                        fetcher_next:=2.U
+                    }.otherwise {
+                        fetcher_waiting:=1.U
+                        fetcher_next:=1.U
+                    }
                 }
 
                 // Decoder 接收整组指令后，PC 跳过所有已经交付的前缀命中项。
