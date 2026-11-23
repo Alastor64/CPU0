@@ -41,8 +41,6 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     val out_prod = Output(Vec(32,SInt(32.W)))
     val out_prod_valid = Output(Vec(32,Bool()))
     val out_valid = Output(UInt(32.W))
-    val out_new_pc_val= Output(UInt(32.W))
-    val out_pc_val_changed = Output(Bool())
   })
   //the buffer queue
   val clk=RegInit(1.U(32.W))
@@ -56,8 +54,6 @@ class Issuer extends Module{//needs to rewrite alu choosing!
   val l=RegInit(0.U(4.W))
   val r=RegInit(0.U(4.W))
   val startALU=RegInit(0.U(2.W))//the first alu to select
-  io.out_pc_val_changed:=false.B
-  io.out_new_pc_val:=0.U
   io.out_executer_RS:=0.U.asTypeOf(io.out_executer_RS)
   io.out_executer_type:=0.U.asTypeOf(io.out_executer_type)
   io.out_ROB:=0.U.asTypeOf(io.out_ROB)
@@ -133,6 +129,8 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     rob.value:= 0.U
                     rob.dest:= 0.S
                     rob.type_ := 0.S
+                    rob.target := 0.U
+                    rob.is_jalr := false.B
                     rob.ready := false.B
                     val rd=Wire(UInt(32.W))
                     val r1=Wire(UInt(32.W))
@@ -330,8 +328,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                             }
                         }
                         is(OP_TYPE.OP_JALR){
-                            // JALR 的目标依赖 rs1，无法在取指阶段确定，
-                            // 因此由 Issue 在操作数就绪后发起一次重定向。
+                            // JALR 的目标依赖 rs1，无法在取指阶段确定。
+                            // Issue 只记录目标地址，真正的 PC 更新由 Committer
+                            // 在 JALR 按序提交时完成。
                             // rd == rs1 只意味着先读旧值、后写新值，不能改变
                             // rs1 的就绪条件，也不能把返回地址当作跳转基址。
                             val rs1Pending = prods(i)(r1) =/= (-1).S(32.W)
@@ -351,8 +350,9 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                     io.reg(r1).value
                                 )
                                 // JALR 的目标始终使用旧 rs1，并按 ISA 清除 bit 0。
-                                io.out_new_pc_val:=(rs1Value.asSInt+r2.asSInt).asUInt & "hfffffffe".U
-                                io.out_pc_val_changed:=true.B
+                                rob.target :=
+                                    (rs1Value.asSInt+r2.asSInt).asUInt & "hfffffffe".U
+                                rob.is_jalr := true.B
                                 halt:=2.U
                             }
                         }
@@ -411,7 +411,8 @@ class Issuer extends Module{//needs to rewrite alu choosing!
             io.out_prod(i):=prods(issueWidth)(i)
         }
     }
-  // Commit 侧只负责丢弃预测错误路径；下一取指 PC 由 Fetcher 管理。
+  // Committer flush 丢弃整个 Issuer 队列。JALR 不再在 Issue 阶段
+  // 自行产生 redirect，因此这里不会误删尚未提交的 JALR 自身。
   when (io.flush_valid===true.B){
     // flush 必须覆盖本周期由旧队列项产生的发射结果。
     io.out_valid:=0.U

@@ -55,6 +55,8 @@ class Committer extends Module{//needs to add branch predictor!
   init.dest := 0.S
   init.value := 0.U
   init.type_ := 0.S
+  init.target := 0.U
+  init.is_jalr := false.B
   init.ready  := false.B
   val robs = RegInit(VecInit(Seq.fill(ROBWidth)(init)))
   io.out_l:=l
@@ -113,7 +115,18 @@ class Committer extends Module{//needs to add branch predictor!
             l:=l+1.U
             val rb = Wire(new ROB)
             rb:=robs(l)
-            when (rb.type_ > 0.S)//store
+            when (rb.is_jalr) {
+                // JALR 在 commit 点同时完成返回地址写回和无条件 PC 重定向。
+                when (rb.dest =/= 0.S) {
+                    io.out_reg_valid:=true.B
+                    io.out_reg_id:=rb.dest.asUInt
+                    io.out_reg_val:=rb.value
+                    io.out_reg_prod:=rb.id
+                }
+                io.out_flush:=true.B
+                io.out_flushval:=rb.id
+                io.out_newaddr:=rb.target
+            }.elsewhen (rb.type_ > 0.S)//store
             {
                 io.out_store_valid:=true.B
                 io.out_store_addr:=rb.dest.asUInt

@@ -16,5 +16,7 @@ class ROB extends Bundle{
     val value = UInt(32.W)
     val dest = SInt(32.W)
     val type_ = SInt(32.W)//if store memory: type=1/2/4; if branch: type<0 ;otherwise type=0
+    val target = UInt(32.W)
+    val is_jalr = Bool()
     val ready = Bool()
 }

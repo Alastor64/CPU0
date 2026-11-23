@@ -8,7 +8,7 @@ import chisel3.simulator.EphemeralSimulator._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-/** 验证 Issuer 内部从接收 JALR 到产生重定向的完整小流程。 */
+/** 验证 Issuer 为 JALR 记录返回地址和 commit-time 重定向目标。 */
 class IssuerJalrSpec extends AnyFlatSpec with Matchers {
 
   private def pokeIdleInputs(dut: Issuer): Unit = {
@@ -37,6 +37,8 @@ class IssuerJalrSpec extends AnyFlatSpec with Matchers {
       dut.io.robs(i).value.poke(0.U)
       dut.io.robs(i).dest.poke(0.S)
       dut.io.robs(i).type_.poke(0.S)
+      dut.io.robs(i).target.poke(0.U)
+      dut.io.robs(i).is_jalr.poke(false.B)
       dut.io.robs(i).ready.poke(false.B)
     }
   }
@@ -69,7 +71,7 @@ class IssuerJalrSpec extends AnyFlatSpec with Matchers {
     dut.reset.poke(false.B)
   }
 
-  "Issuer JALR" should "redirect from the old rs1 when rd aliases rs1" in {
+  "Issuer JALR" should "record the target from the old rs1 when rd aliases rs1" in {
     simulate(new Issuer) { dut =>
       resetIssuer(dut)
 
@@ -78,9 +80,10 @@ class IssuerJalrSpec extends AnyFlatSpec with Matchers {
       dut.clock.step()
       dut.io.in_valid.poke(false.B)
 
-      dut.io.out_pc_val_changed.expect(true.B)
-      dut.io.out_new_pc_val.expect(0x38.U)
+      dut.io.out_valid.expect(1.U)
       dut.io.out_executer_RS(0).v1.expect(0x2c.U)
+      dut.io.out_ROB(0).target.expect(0x38.U)
+      dut.io.out_ROB(0).is_jalr.expect(true.B)
     }
   }
 
@@ -93,15 +96,15 @@ class IssuerJalrSpec extends AnyFlatSpec with Matchers {
       dut.io.in_valid.poke(false.B)
 
       dut.io.out_valid.expect(0.U)
-      dut.io.out_pc_val_changed.expect(false.B)
 
       dut.io.robs(0).id.poke(7.U)
       dut.io.robs(0).value.poke(0x25.U)
       dut.io.robs(0).ready.poke(true.B)
 
-      dut.io.out_pc_val_changed.expect(true.B)
-      dut.io.out_new_pc_val.expect(0x38.U)
+      dut.io.out_valid.expect(1.U)
       dut.io.out_executer_RS(0).v1.expect(0x2c.U)
+      dut.io.out_ROB(0).target.expect(0x38.U)
+      dut.io.out_ROB(0).is_jalr.expect(true.B)
     }
   }
 }

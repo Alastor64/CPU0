@@ -37,6 +37,8 @@ class IssuerX0Spec extends AnyFlatSpec with Matchers {
       dut.io.robs(i).value.poke(0.U)
       dut.io.robs(i).dest.poke(0.S)
       dut.io.robs(i).type_.poke(0.S)
+      dut.io.robs(i).target.poke(0.U)
+      dut.io.robs(i).is_jalr.poke(false.B)
       dut.io.robs(i).ready.poke(false.B)
     }
   }

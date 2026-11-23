@@ -104,9 +104,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     flush:=committer.io.out_flush
     flush_val:=committer.io.out_flushval.asSInt
     newaddr:=committer.io.out_newaddr
-    // Committer 回滚和 JALR 在 Issue 阶段产生的 redirect 都必须丢弃
-    // Decoder 中尚未进入 Issuer 的年轻指令。
-    decoder.io.flush_valid := flush || issuer.io.out_pc_val_changed
+    // Committer 回滚必须丢弃 Decoder 中尚未进入 Issuer 的年轻指令。
+    // JALR 同样在 Commit 点才产生 redirect，因此不再需要 Issue 特例。
+    decoder.io.flush_valid := flush
     decoder.io.out_ready := issuer.io.in_ready
     issuer.io.in_valid := decoder.io.out_valid
     
@@ -265,12 +265,12 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     new_pc_val := 0.U
     predicted_redirect := false.B
     predicted_pc := 0.U
-    // Committer flush 的优先级最高，其次是 Issuer 的 JALR redirect，最后是取指预测。
-    fetcher_redirect := flush || issuer.io.out_pc_val_changed || predicted_redirect
+    // Committer flush 的优先级最高，其次是取指预测。
+    fetcher_redirect := flush || predicted_redirect
     fetcher_redirect_target := Mux(
         flush,
         newaddr,
-        Mux(issuer.io.out_pc_val_changed, issuer.io.out_new_pc_val, predicted_pc)
+        predicted_pc
     )
 
     // Capture only after the store reaches the commit point, so a store on a
@@ -352,6 +352,17 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         when (flush===true.B){//flush
             issuer.io.flush_valid:=true.B
             issuer.io.valid_num:=0.U
+            // JALR 在同一拍既 flush 年轻指令，又提交自己的返回地址。
+            // 普通分支 flush 没有寄存器写回，本路径自然跳过。
+            when (committer.io.out_reg_valid===true.B) {
+                val id=Wire(UInt(5.W))
+                id:=committer.io.out_reg_id
+                regs(id).value := committer.io.out_reg_val
+                when (regs(id).prod.asUInt===committer.io.out_reg_prod &&
+                    issuer.io.out_prod_valid(id)===false.B) {
+                    regs(id).prod := -1.S(32.W)
+                }
+            }
             for (i<-0 until ALU_NUM)
             {
                 alus(i).io.clear_valid:=true.B
