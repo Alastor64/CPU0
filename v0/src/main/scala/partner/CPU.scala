@@ -241,6 +241,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val fetcher_redirect = Wire(Bool())
     val fetcher_redirect_target = Wire(UInt(32.W))
     val lsu_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for memory, 3 got memory, storing into Dcache
+    val lsu_discard_pending = RegInit(false.B)
     val lsu_lst_addr=Reg(UInt(32.W))
     val committer_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for Dcache write back
     val Dcache_waiting = RegInit(0.U(2.W))
@@ -314,7 +315,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 }
             }
             committer.io.clear_valid:=true.B
-            lsu_waiting:=0.U
             committer_waiting:=0.U
             Dcache_waiting:=0.U
             
@@ -342,6 +342,27 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     when (io.rvalid===true.B) {
                         fetcher_waiting:=0.U
                     }
+                }
+            }
+
+            // LSU 若已占用共享读通道，必须继续完成旧事务；响应只丢弃，
+            // 避免其残留到 redirect 后的 Fetch 新请求上。
+            when (lsu_waiting<=1.U) {
+                lsu_waiting:=0.U
+                lsu_discard_pending:=false.B
+            }.elsewhen (lsu_waiting===2.U) {
+                lsu_discard_pending:=true.B
+                io.araddr:=lsu_lst_addr
+                io.arvalid:=true.B
+                when (io.arready===true.B) {
+                    lsu_waiting:=3.U
+                }
+            }.otherwise {
+                lsu_discard_pending:=true.B
+                io.rready:=true.B
+                when (io.rvalid===true.B) {
+                    lsu_waiting:=0.U
+                    lsu_discard_pending:=false.B
                 }
             }
 
@@ -650,23 +671,34 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                             lsu_waiting:=2.U
                         }
                     }
-                }.elsewhen(lsu_waiting===2.U&&fetcher_next===0.U){
-                    // arready only acknowledges a request asserted in this cycle.
-                    io.araddr:=lsu_lst_addr
-                    io.arvalid:=true.B
-                    when (io.arready===true.B){
-                        io.rready:=true.B
-                        lsu_waiting:=3.U
+                }.elsewhen(lsu_waiting===2.U){
+                    // redirect 后的旧事务优先排空；正常请求只在 Fetch 不占用
+                    // 地址通道时发送。
+                    when (lsu_discard_pending||fetcher_next===0.U){
+                        io.araddr:=lsu_lst_addr
+                        io.arvalid:=true.B
+                        when (io.arready===true.B){
+                            io.rready:=true.B
+                            lsu_waiting:=3.U
+                        }
                     }
                 }.otherwise{
-                    when (io.rvalid===true.B){
-                        lsu_waiting:=0.U
-                        lsu.lsuIO.addr_valid:=true.B
-                        lsu.lsuIO.addr_value:=io.rdata
-                        Dcache.io.new_valid:=true.B
-                        Dcache.io.new_data:=io.rdata
-                    }.otherwise{
+                    when (lsu_discard_pending===true.B){
                         io.rready:=true.B
+                        when (io.rvalid===true.B){
+                            lsu_waiting:=0.U
+                            lsu_discard_pending:=false.B
+                        }
+                    }.otherwise{
+                        when (io.rvalid===true.B){
+                            lsu_waiting:=0.U
+                            lsu.lsuIO.addr_valid:=true.B
+                            lsu.lsuIO.addr_value:=io.rdata
+                            Dcache.io.new_valid:=true.B
+                            Dcache.io.new_data:=io.rdata
+                        }.otherwise{
+                            io.rready:=true.B
+                        }
                     }
                 }
                 // Fetch 拥有唯一的读事务时，不能让后续 LSU 仲裁覆盖 RREADY。
