@@ -104,7 +104,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     flush:=committer.io.out_flush
     flush_val:=committer.io.out_flushval.asSInt
     newaddr:=committer.io.out_newaddr
-    decoder.io.flush_valid := flush
+    // Committer 回滚和 JALR 在 Issue 阶段产生的 redirect 都必须丢弃
+    // Decoder 中尚未进入 Issuer 的年轻指令。
+    decoder.io.flush_valid := flush || issuer.io.out_pc_val_changed
     decoder.io.out_ready := issuer.io.in_ready
     issuer.io.in_valid := decoder.io.out_valid
     
