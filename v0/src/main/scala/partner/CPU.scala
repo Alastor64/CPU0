@@ -531,6 +531,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                             for (i<-0 until issueWidth){
                                 Icache((i+l)%issueWidth).io.load_valid:=true.B
                                 Icache((i+l)%issueWidth).io.addr:=new_pc_val+(i*4).U
+                                // 从内存取回的是完整 32 位指令字；回填时必须写入全部四字节。
+                                Icache((i+l)%issueWidth).io.wmask:=15.U
                             }
                         }
                     }
