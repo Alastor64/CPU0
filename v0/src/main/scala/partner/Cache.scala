@@ -139,7 +139,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
             when (missed===false.B){//update age
                 for (i<-0 until lineNum)
                 {
-                    when (age(i)(lstIdx)<threshold_age)
+                    when (valid(i)(lstIdx) && age(i)(lstIdx)<threshold_age)
                     {
                        age(i)(lstIdx):=age(i)(lstIdx)+1.U
                     }
@@ -207,12 +207,18 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     }
     when (write_data===true.B)
     {
-        val chosen = WireDefault(0.U(2.W))
-        for (i<-(lineNum-1) to 0 by -1){
-            when (valid(i)(lstIdx)===false.B){
-                chosen:=i.U
-            }.elsewhen (age(i)(lstIdx)===(lineNum-1).U){//maxage,need to be replaced
-                chosen:=i.U
+        val wayValid = Wire(Vec(lineNum, Bool()))
+        val wayAge = Wire(Vec(lineNum, UInt(2.W)))
+        for (i<-0 until lineNum){
+            wayValid(i):=valid(i)(lstIdx)
+            wayAge(i):=age(i)(lstIdx)
+        }
+        val chosen = CacheReplacement.selectVictim(wayValid, wayAge)
+
+        for (i<-0 until lineNum)//write new val
+        {
+            when (i.U===chosen)
+            {
                 when (dirty(i)(lstIdx)===true.B){
                     writeback_valid:=true.B
                     when (missed===true.B)//missed in the current cycle
@@ -225,12 +231,7 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                     }
                     waiting:=2.U
                 }
-            }
-        }
-        for (i<-0 until lineNum)//write new val
-        {
-            when (i.U===chosen)
-            {
+
                 tagRams(i).clk:=clock
                 tagRams(i).en:=true.B
                 tagRams(i).we:=true.B
@@ -249,7 +250,13 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
                 dirty(i)(lstIdx):=isdirty
                 age(i)(lstIdx):=0.U
             }.otherwise{
-                age(i)(lstIdx):=age(i)(lstIdx)+1.U
+                when (valid(i)(lstIdx)===true.B){
+                    age(i)(lstIdx):=Mux(
+                        age(i)(lstIdx)===(lineNum-1).U,
+                        age(i)(lstIdx),
+                        age(i)(lstIdx)+1.U
+                    )
+                }
             }
         }
     }
