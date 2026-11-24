@@ -18,6 +18,9 @@ class RS extends Bundle{
     val q1 = SInt(32.W)
     val q2 = SInt(32.W)
     val dest = SInt(32.W)
+    // 分支是否需要反转比较结果。它本来只有 1 位，单独存放可以避免把
+    // 一个 32 位字段的其余位带入 BRU 的选择逻辑。
+    val branchInvert = Bool()
     val id = UInt(32.W)
     val is_halt = Bool()
 }

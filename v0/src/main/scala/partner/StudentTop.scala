@@ -58,4 +58,9 @@ class StudentTop extends Module with RequireSyncReset {
   cpu.io.bresp   := bresp
   cpu.io.bvalid  := bvalid
 
+  // 课程内存模型正常只会返回 OKAY；把响应码纳入断言既避免端口被静默
+  // 丢弃，也能在总线协议错误时立即暴露问题。
+  assert(rresp === 0.U, "AXI4-Lite read response must be OKAY")
+  assert(bresp === 0.U, "AXI4-Lite write response must be OKAY")
+
 }

@@ -139,7 +139,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     decoder.io.valid_num:=0.U
 
     for (i<-0 until issueWidth){
-        Icache(i).io.addr:=0.U
+        Icache(i).io.addr:=0.U((32-4).W)
         Icache(i).io.need_load:=false.B
         Icache(i).io.wdata:=0.U
         Icache(i).io.wmask:=0.U
@@ -151,7 +151,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         Icache(i).io.clear_status:=fetch_clear_status
     }
     issuer.io.flush_valid:=false.B
-    Dcache.io.addr:=0.U
+    Dcache.io.addr:=0.U((32-2).W)
     Dcache.io.need_load:=false.B
     Dcache.io.wdata:=0.U
     Dcache.io.wmask:=0.U
@@ -181,6 +181,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     // explicitly enables them below.
     predictor.io.queryValid := false.B
     predictor.io.uvalid := false.B
+    predictor.io.queryPc := 0.U
     predictor.io.uaddr := 0.U
     predictor.io.ures := 0.U
 
@@ -261,7 +262,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             Mux(predictionMatchesPc, predictor.io.out(i), 0.U)
     }
     decoder.io.prediction := current_prediction
-    fetchControl.io.predictions := current_prediction
+    for (i <- 0 until issueWidth) {
+        fetchControl.io.predictions(i) := current_prediction(i)(0)
+    }
 
     // 本拍组合决定的 Fetcher 下一状态，同时用于判断是否继续预查 Icache。
     val fetcher_next = Wire(UInt(2.W))
@@ -641,9 +644,15 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     for (l<-0 until issueWidth){
                         when (new_pc_val(3,2)===l.U){
                             for (i<-0 until issueWidth){
-                                predictor.io.qaddrs(i) := new_pc_val+(i*4).U
+                                predictor.io.queryPc := new_pc_val
+                                predictor.io.qaddrs(i) :=
+                                    new_pc_val(PBIT+1,2)+i.U(PBIT.W)
                                 Icache((i+l)%issueWidth).io.load_valid:=true.B
-                                Icache((i+l)%issueWidth).io.addr:=new_pc_val+(i*4).U
+                                val laneCarry =
+                                    if (i == 0) false.B
+                                    else new_pc_val(3,2) >= (4-i).U
+                                Icache((i+l)%issueWidth).io.addr:=
+                                    new_pc_val(31,4)+laneCarry.asUInt
                                 // 从内存取回的是完整 32 位指令字；回填时必须写入全部四字节。
                                 Icache((i+l)%issueWidth).io.wmask:=15.U
                             }
@@ -693,7 +702,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 when (lsu_waiting===0.U){
                     when (lsu.lsuIO.out_valid===true.B&&Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B&&committer_waiting===0.U&&committer.io.out_store_valid===false.B){//can load only when no store
                         Dcache.io.load_valid:=true.B
-                        Dcache.io.addr := lsu.lsuIO.out_addr
+                        Dcache.io.addr := lsu.lsuIO.out_addr(31,2)
                         // Load miss 的返回值是完整 32 位字，回填四个字节。
                         Dcache.io.wmask := 15.U
                         lsu_lst_addr := lsu.lsuIO.out_addr
@@ -787,7 +796,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     when (committer.io.out_store_valid===true.B&&exit_store_commit===false.B&&
                         Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B){//store
                         Dcache.io.store_valid := true.B
-                        Dcache.io.addr := committer.io.out_store_addr
+                        Dcache.io.addr := committer.io.out_store_addr(31,2)
                         Dcache.io.wdata := committer.io.out_store_value
                         Dcache.io.wmask := committer.io.out_store_mask
                         committer_waiting:=1.U

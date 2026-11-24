@@ -55,7 +55,9 @@ class FetchControl extends Module {
     val pcs = Input(Vec(issueWidth, UInt(32.W)))
     val instructions = Input(Vec(issueWidth, UInt(32.W)))
     val hits = Input(Vec(issueWidth, Bool()))
-    val predictions = Input(Vec(issueWidth, UInt(32.W)))
+    // FetchControl 只需要最终的 taken/not-taken 决策；完整的预测元数据由
+    // Decoder 和 Issuer 使用，不应在本模块中携带。
+    val predictions = Input(Vec(issueWidth, Bool()))
 
     val validMask = Output(Vec(issueWidth, Bool()))
     val validNum = Output(UInt(3.W))
@@ -77,7 +79,7 @@ class FetchControl extends Module {
     val slotValid = active(i) && io.hits(i)
     val isBranch = FetchPredecode.isBranch(instruction)
     val isJal = FetchPredecode.isJal(instruction)
-    val branchRedirect = isBranch && io.predictions(i)(0)
+    val branchRedirect = isBranch && io.predictions(i)
     val redirect = isJal || branchRedirect
 
     io.validMask(i) := slotValid

@@ -22,7 +22,8 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
         val load_valid = Input(Bool())//load
         val need_load = Input(Bool())//if cache miss when loading, whether need to wait for the new value from the memory
         val store_valid = Input(Bool())//store
-        val addr  = Input(UInt(32.W))
+        // 地址右移 offsetBIT 后的 Cache 字地址，仅保留 tag 与 set 所需位。
+        val addr  = Input(UInt((32-offsetBIT).W))
         val wdata = Input(UInt(32.W))
         val wmask = Input(UInt(4.W))
 
@@ -106,8 +107,8 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     flag:=0.U
     data:=0.U
     isdirty:=false.B
-    set_idx := io.addr(setBIT+offsetBIT-1,offsetBIT)
-    tag := io.addr(31,setBIT+offsetBIT)
+    set_idx := io.addr(setBIT-1,0)
+    tag := io.addr(31-offsetBIT,setBIT)
 
     when (waiting===0.U||(waiting===1.U&&io.clear_status===true.B))
     {

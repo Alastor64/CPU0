@@ -42,6 +42,23 @@ class Issuer extends Module{//needs to rewrite alu choosing!
     val out_prod_valid = Output(Vec(32,Bool()))
     val out_valid = Output(UInt(32.W))
   })
+
+  /** 计算 32 位加法的高 31 位，调用方再显式补 0 作为半字对齐地址。 */
+  private def addHigh31(a: UInt, b: UInt): UInt = {
+    require(a.getWidth == 32 && b.getWidth == 32)
+    val carry = Wire(Vec(33,Bool()))
+    val highSum = Wire(Vec(31,Bool()))
+    carry(0) := false.B
+    for (i <- 0 until 32) {
+      val propagate = a(i) ^ b(i)
+      if (i > 0) {
+        highSum(i-1) := propagate ^ carry(i)
+      }
+      carry(i+1) := (a(i) & b(i)) | (propagate & carry(i))
+    }
+    highSum.asUInt
+  }
+
   //the buffer queue
   val clk=RegInit(1.U(32.W))
   clk:=clk+issueWidth.U(32.W)
@@ -124,6 +141,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                     rs.q1:= (-1).S
                     rs.q2:= (-1).S
                     rs.dest:= (-1).S
+                    rs.branchInvert := false.B
                     rs.is_halt := false.B
                     rob.id:=0.U
                     rob.value:= 0.U
@@ -304,10 +322,15 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                         rs.q2:=prods(i)(r2)
                                     }
                                 }
-                                rs.dest:=io.predictor_result(i)(0).asSInt
+                                rs.branchInvert:=io.predictor_result(i)(0)
                                 executer_type:=(ALU_NUM+1).U//bru
                                 rob.id:=clk+i.U
-                                rob.dest:=Mux(rs.dest=/=0.S(32.W),id_buffer(startingPoint+i.U)+4.U,(id_buffer(startingPoint+i.U).asSInt+rd.asSInt).asUInt).asSInt
+                                val branchOffset =
+                                  Mux(rs.branchInvert,4.U(32.W),rd)
+                                rob.dest:=Cat(
+                                  addHigh31(id_buffer(startingPoint+i.U),branchOffset),
+                                  false.B,
+                                ).asSInt
                                 rob.type_ := (~id_buffer(startingPoint+i.U)).asSInt
                                 rob.value:=io.predictor_result(i)
                                 halt:=2.U
@@ -351,7 +374,7 @@ class Issuer extends Module{//needs to rewrite alu choosing!
                                 )
                                 // JALR 的目标始终使用旧 rs1，并按 ISA 清除 bit 0。
                                 rob.target :=
-                                    (rs1Value.asSInt+r2.asSInt).asUInt & "hfffffffe".U
+                                    Cat(addHigh31(rs1Value,r2),false.B)
                                 rob.is_jalr := true.B
                                 halt:=2.U
                             }

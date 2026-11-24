@@ -34,12 +34,16 @@ class PHTUpdate extends Bundle {
   */
 class Predictor extends Module {
   val io = IO(new Bundle {
-    val qaddrs = Input(Vec(issueWidth, UInt(32.W)))
+    // PC[PBIT+1:2]，PHT 索引不需要地址低两位和高位 tag。
+    val qaddrs = Input(Vec(issueWidth, UInt(PBIT.W)))
+    // 完整 PC 仅用于判断预测结果是否仍对应当前取指组。
+    val queryPc = Input(UInt(32.W))
     /** Query a complete candidate group. The result appears one cycle later. */
     val queryValid = Input(Bool())
     val uvalid = Input(Bool())
-    val uaddr = Input(UInt(32.W))
-    val ures = Input(UInt(32.W))
+    val uaddr = Input(UInt(PBIT.W))
+    // 局部历史、全局历史及四个控制位共 PBIT+KBIT+4 位。
+    val ures = Input(UInt((PBIT+KBIT+4).W))
 
     /** Asserted while a pending training request blocks PHT reads. */
     val stall = Output(Bool())
@@ -92,16 +96,25 @@ class Predictor extends Module {
   val queryGshare = Wire(Vec(issueWidth, Bool()))
   val queryUseGshare = Wire(Vec(issueWidth, Bool()))
   val queryPhtValid = Wire(Vec(issueWidth, Bool()))
+  // 先收窄为 1 位向量再动态索引，避免 CIRCT 展开完整 3 位寄存器选择。
+  val gshareHigh = Wire(Vec(PSIZE, Bool()))
+  val scoreHigh = Wire(Vec(PSIZE, Bool()))
+  for (i <- 0 until PSIZE) {
+    gshareHigh(i) := Gshare_status(i)(2)
+    scoreHigh(i) := score(i)(2)
+  }
 
   for (i <- 0 until issueWidth) {
-    querySubaddr(i) := io.qaddrs(i)(PBIT + 1, 2)
+    querySubaddr(i) := io.qaddrs(i)
     queryLocalHistory(i) := LHT(querySubaddr(i))
     queryBankAddress(i) := Cat(
       querySubaddr(i)(PBIT - 1, bankSelectBits),
       queryLocalHistory(i),
     )
-    queryGshare(i) := Gshare_status(querySubaddr(i) ^ history) >= 2.U
-    queryUseGshare(i) := score(querySubaddr(i)) >= 2.U
+    // 这两个 3 位饱和计数器只在查询时需要判断是否达到阈值 2，
+    // 因此直接取最高位，避免生成只使用部分位的 3 位选择结果。
+    queryGshare(i) := gshareHigh(querySubaddr(i) ^ history)
+    queryUseGshare(i) := scoreHigh(querySubaddr(i))
     queryPhtValid(i) := phtValid(Cat(querySubaddr(i), queryLocalHistory(i)))
   }
 
@@ -136,7 +149,7 @@ class Predictor extends Module {
 
   queryFresh := queryEnabled
   when(queryEnabled) {
-    queryPc := io.qaddrs(0)
+    queryPc := io.queryPc
     queryHistoryReg := history
     for (i <- 0 until issueWidth) {
       queryBankSelectReg(i) := querySubaddr(i)(bankSelectBits - 1, 0)
@@ -147,23 +160,23 @@ class Predictor extends Module {
     }
   }
 
-  val phtCounter = Wire(Vec(issueWidth, UInt(3.W)))
+  val phtTaken = Wire(Vec(issueWidth, Bool()))
   val freshPrediction = Wire(Vec(issueWidth, UInt(32.W)))
   for (i <- 0 until issueWidth) {
-    phtCounter(i) := phtBanks(0).rdata
+    phtTaken(i) := phtBanks(0).rdata(2)
     for (bank <- 1 until bankCount) {
       when(queryBankSelectReg(i) === bank.U) {
-        phtCounter(i) := phtBanks(bank).rdata
+        phtTaken(i) := phtBanks(bank).rdata(2)
       }
     }
 
-    val phtTaken = Mux(
+    val predictedTaken = Mux(
       queryPhtValidReg(i),
-      phtCounter(i) >= 2.U,
+      phtTaken(i),
       false.B,
     )
-    val differentResult = queryGshareReg(i) =/= phtTaken
-    val selected = Mux(queryUseGshareReg(i), queryGshareReg(i), phtTaken)
+    val differentResult = queryGshareReg(i) =/= predictedTaken
+    val selected = Mux(queryUseGshareReg(i), queryGshareReg(i), predictedTaken)
     freshPrediction(i) := Cat(
       queryLocalHistoryReg(i),
       queryHistoryReg,
@@ -191,7 +204,7 @@ class Predictor extends Module {
   }
 
   val incomingUpdate = Wire(new PHTUpdate)
-  incomingUpdate.subaddr := io.uaddr(PBIT + 1, 2)
+  incomingUpdate.subaddr := io.uaddr
   incomingUpdate.localHistory := io.ures(PBIT + KBIT + 3, PBIT + 4)
   incomingUpdate.actualTaken := io.ures(1) ^ io.ures(0)
 

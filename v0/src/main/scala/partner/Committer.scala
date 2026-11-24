@@ -44,8 +44,8 @@ class Committer extends Module{//needs to add branch predictor!
     val out_halt=Output(Bool())
 
     val out_predictor_valid = Output(Bool())
-    val out_predictor_addr = Output(UInt(32.W))
-    val out_predictor_res = Output(UInt(32.W))
+    val out_predictor_addr = Output(UInt(PBIT.W))
+    val out_predictor_res = Output(UInt((PBIT+KBIT+4).W))
   })
   val l = RegInit(0.U(4.W))
   val r = RegInit(0.U(4.W))
@@ -153,8 +153,10 @@ class Committer extends Module{//needs to add branch predictor!
                     io.out_newaddr:=rb.dest.asUInt                 
                 }
                 io.out_predictor_valid := true.B
-                io.out_predictor_addr := ~(rb.type_.asUInt)
-                io.out_predictor_res :=  rb.value
+                io.out_predictor_addr :=
+                  ~(rb.type_.asUInt(PBIT+1,2))
+                io.out_predictor_res :=
+                  rb.value(PBIT+KBIT+3,0)
             }
         }
     }.otherwise{

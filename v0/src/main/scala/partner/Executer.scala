@@ -216,8 +216,10 @@ class Divider extends Module{//unsigned
     })
     val A = Reg(Vec(32, UInt(32.W)))
     val B = Reg(Vec(32, UInt(32.W)))
-    val R = Reg(Vec(32, UInt(32.W)))
-    val Q = Reg(Vec(32,UInt(32.W)))
+    val R = Reg(Vec(31, UInt(31.W)))
+    val Q = Seq.tabulate(31)(i => Reg(UInt((i+1).W)))
+    val finalRemainder = Reg(UInt(32.W))
+    val finalQuotient = Reg(UInt(32.W))
     val rd =RegInit(VecInit(Seq.fill(32)(0.U(32.W))))
     val ops= Reg(Vec(32,Bool()))
     val r= Wire(Vec(32,UInt(32.W)))
@@ -246,12 +248,19 @@ class Divider extends Module{//unsigned
         else{
           subs(i).io.b:=B(i-1)
         }
-       R(i):=Mux(subs(i).io.c(31),r(i),subs(i).io.c)
-       if (i==0){
-        Q(i):=Cat(0.U(31.W),Mux(subs(i).io.c(31),false.B,true.B))
+       val quotientBit = !subs(i).io.c(31)
+       if (i<31){
+        R(i):=Mux(subs(i).io.c(31),r(i)(30,0),subs(i).io.c(30,0))
+        if (i==0){
+          Q(i):=quotientBit.asUInt
+        }
+        else{
+          Q(i):=Cat(Q(i-1),quotientBit)
+        }
        }
        else{
-        Q(i):=Cat(Q(i-1)(30,0),Mux(subs(i).io.c(31),false.B,true.B))
+        finalRemainder:=Mux(subs(i).io.c(31),r(i),subs(i).io.c)
+        finalQuotient:=Cat(Q(i-1),quotientBit)
        }
     }
     when (io.clear_valid===true.B){
@@ -261,7 +270,7 @@ class Divider extends Module{//unsigned
         }
     }
     io.ready:=rd(31)
-    io.c:=Mux(ops(31),Q(31),R(31))
+    io.c:=Mux(ops(31),finalQuotient,finalRemainder)
     io.received:=received
 }
 
@@ -507,6 +516,18 @@ class ALU(val id: Int, rsDepth: Int = RSWidth) extends Executer(rsDepth) {
   aluIO.out_div_a:=0.U
   aluIO.out_div_b:=0.U
   aluIO.out_div_op:=false.B
+
+  /** 32 位模意义下的动态左移，避免 Chisel 生成 63 位后只截取低 32 位。 */
+  private def shiftLeft32(value: UInt, amount: UInt): UInt =
+    (0 until 5).foldLeft(value) { (shifted, stage) =>
+      val distance = 1 << stage
+      Mux(
+        amount(stage),
+        Cat(shifted(31-distance,0),0.U(distance.W)),
+        shifted,
+      )
+    }
+
   val temp_out_mult_a=Reg(UInt(32.W))
   val temp_out_mult_b=Reg(UInt(32.W))
   val temp_out_mult_op=Reg(Bool())
@@ -575,7 +596,7 @@ class ALU(val id: Int, rsDepth: Int = RSWidth) extends Executer(rsDepth) {
         res:=temp_rs.v1^temp_rs.v2
       }
       is (OP_TYPE.OP_SLL){
-        res:=(temp_rs.v1<<(temp_rs.v2(4,0)))(31,0)
+        res:=shiftLeft32(temp_rs.v1,temp_rs.v2(4,0))
       }
       is (OP_TYPE.OP_SRL){
         res:=(temp_rs.v1>>(temp_rs.v2(4,0)))
@@ -602,7 +623,7 @@ class ALU(val id: Int, rsDepth: Int = RSWidth) extends Executer(rsDepth) {
         res:=temp_rs.v1 ^ temp_rs.v2
       }
       is (OP_TYPE.OP_SLLI){
-        res:=(temp_rs.v1<<temp_rs.v2(4,0))(31,0)
+        res:=shiftLeft32(temp_rs.v1,temp_rs.v2(4,0))
       }
       is (OP_TYPE.OP_SRLI){
         res:=temp_rs.v1>>temp_rs.v2(4,0)
@@ -857,22 +878,22 @@ class BRU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
     when (start_process===true.B){
       switch (temp_rs.type_){
         is (OP_TYPE.OP_BEQ){
-          res:=(temp_rs.v1===temp_rs.v2)^temp_rs.dest(0).asBool
+          res:=(temp_rs.v1===temp_rs.v2)^temp_rs.branchInvert
         }
         is (OP_TYPE.OP_BGE){
-          res:=(temp_rs.v1.asSInt>=temp_rs.v2.asSInt)^temp_rs.dest(0).asBool
+          res:=(temp_rs.v1.asSInt>=temp_rs.v2.asSInt)^temp_rs.branchInvert
         }
         is (OP_TYPE.OP_BGEU){
-          res:=(temp_rs.v1>=temp_rs.v2)^temp_rs.dest(0).asBool
+          res:=(temp_rs.v1>=temp_rs.v2)^temp_rs.branchInvert
         }
         is (OP_TYPE.OP_BLT){
-          res:=(temp_rs.v1.asSInt<temp_rs.v2.asSInt)^temp_rs.dest(0).asBool
+          res:=(temp_rs.v1.asSInt<temp_rs.v2.asSInt)^temp_rs.branchInvert
         }
         is (OP_TYPE.OP_BLTU){
-          res:=(temp_rs.v1<temp_rs.v2)^temp_rs.dest(0).asBool
+          res:=(temp_rs.v1<temp_rs.v2)^temp_rs.branchInvert
         }
         is (OP_TYPE.OP_BNE){
-          res:=(temp_rs.v1=/=temp_rs.v2)^temp_rs.dest(0).asBool
+          res:=(temp_rs.v1=/=temp_rs.v2)^temp_rs.branchInvert
         }
       }
       io.out_cdb.id:=temp_rs.id

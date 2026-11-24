@@ -25,7 +25,7 @@ class FetchControlSpec extends AnyFlatSpec with Matchers {
       dut.io.pcs(i).poke((0x100 + 4 * i).U)
       dut.io.instructions(i).poke(instructions.lift(i).getOrElse(Addi).U)
       dut.io.hits(i).poke(hits.lift(i).getOrElse(true).B)
-      dut.io.predictions(i).poke(predictions.lift(i).getOrElse(0).U)
+      dut.io.predictions(i).poke((predictions.lift(i).getOrElse(0) != 0).B)
     }
 
     for (i <- 0 until 4) {
