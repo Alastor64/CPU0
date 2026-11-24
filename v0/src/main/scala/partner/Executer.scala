@@ -214,7 +214,10 @@ class Divider extends Module{//unsigned
     val c = Output(UInt(32.W))
     val received = Output(UInt(32.W))
     })
-    val A = Reg(Vec(32, UInt(32.W)))
+    // Stage i consumes the current MSB at the next step, then carries only the
+    // remaining lower bits. Narrowing the pipeline avoids 32 full-width copies
+    // of the dividend.
+    val A = Seq.tabulate(31)(i => Reg(UInt((31 - i).W)))
     val B = Reg(Vec(32, UInt(32.W)))
     val R = Reg(Vec(31, UInt(31.W)))
     val Q = Seq.tabulate(31)(i => Reg(UInt((i+1).W)))
@@ -229,14 +232,16 @@ class Divider extends Module{//unsigned
     for (i<-0 until 32){
        if (i==0){
         r(i):=Cat(0.U(31.W),io.a(31-i))
-        A(i):=io.a
+        A(i):=io.a(30,0)
         B(i):=io.b
         rd(i):=io.valid
         ops(i):=io.op
        }
        else{
         r(i):=Cat(R(i-1)(30,0),A(i-1)(31-i))
-        A(i):=A(i-1)
+        if (i<31){
+          A(i):=A(i-1)(30-i,0)
+        }
         B(i):=B(i-1)
         rd(i):=rd(i-1)
         ops(i):=ops(i-1)

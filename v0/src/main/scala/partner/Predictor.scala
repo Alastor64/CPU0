@@ -74,12 +74,15 @@ class Predictor extends Module {
   val score = RegInit(VecInit(Seq.fill(PSIZE)(1.U(3.W))))
   val history = RegInit(0.U(PBIT.W))
 
-  // SRAM has no reset value. A parallel validity bitmap makes unseen entries
-  // behave exactly like the previous RegInit(1) PHT.
-  val phtValid = RegInit(VecInit(Seq.fill(KSIZE)(false.B)))
+  // Keep the valid bit beside the counter in SRAM. A separate KSIZE-entry
+  // register bitmap expands every dynamic lookup into thousands of casez
+  // branches in the generated Verilog. The SRAM word is 4 bits: [3] means
+  // initialized and [2:0] is the saturating counter.
+  private val phtWordWidth = 4
+  private val phtValidBit = phtWordWidth - 1
 
   val phtBanks = Seq.tabulate(bankCount) { _ =>
-    Module(new SRAM(bankDepth, 3, 3))
+    Module(new SRAM(bankDepth, phtWordWidth, phtWordWidth))
   }
   for (bank <- phtBanks) {
     bank.clk := clock
@@ -95,7 +98,6 @@ class Predictor extends Module {
   val queryBankAddress = Wire(Vec(issueWidth, UInt(bankAddressBits.W)))
   val queryGshare = Wire(Vec(issueWidth, Bool()))
   val queryUseGshare = Wire(Vec(issueWidth, Bool()))
-  val queryPhtValid = Wire(Vec(issueWidth, Bool()))
   // 先收窄为 1 位向量再动态索引，避免 CIRCT 展开完整 3 位寄存器选择。
   val gshareHigh = Wire(Vec(PSIZE, Bool()))
   val scoreHigh = Wire(Vec(PSIZE, Bool()))
@@ -115,7 +117,6 @@ class Predictor extends Module {
     // 因此直接取最高位，避免生成只使用部分位的 3 位选择结果。
     queryGshare(i) := gshareHigh(querySubaddr(i) ^ history)
     queryUseGshare(i) := scoreHigh(querySubaddr(i))
-    queryPhtValid(i) := phtValid(Cat(querySubaddr(i), queryLocalHistory(i)))
   }
 
   val queryEnabled = io.queryValid && !io.stall
@@ -144,8 +145,6 @@ class Predictor extends Module {
     RegInit(VecInit(Seq.fill(issueWidth)(false.B)))
   val queryUseGshareReg =
     RegInit(VecInit(Seq.fill(issueWidth)(false.B)))
-  val queryPhtValidReg =
-    RegInit(VecInit(Seq.fill(issueWidth)(false.B)))
 
   queryFresh := queryEnabled
   when(queryEnabled) {
@@ -156,25 +155,25 @@ class Predictor extends Module {
       queryLocalHistoryReg(i) := queryLocalHistory(i)
       queryGshareReg(i) := queryGshare(i)
       queryUseGshareReg(i) := queryUseGshare(i)
-      queryPhtValidReg(i) := queryPhtValid(i)
     }
   }
 
+  // Only the valid and threshold bits participate in prediction. Selecting
+  // the full SRAM word would leave the counter's lower bits unused.
+  val phtStates = Wire(Vec(issueWidth, UInt(2.W)))
   val phtTaken = Wire(Vec(issueWidth, Bool()))
   val freshPrediction = Wire(Vec(issueWidth, UInt(32.W)))
   for (i <- 0 until issueWidth) {
-    phtTaken(i) := phtBanks(0).rdata(2)
+    phtStates(i) := Cat(phtBanks(0).rdata(phtValidBit), phtBanks(0).rdata(2))
     for (bank <- 1 until bankCount) {
       when(queryBankSelectReg(i) === bank.U) {
-        phtTaken(i) := phtBanks(bank).rdata(2)
+        phtStates(i) :=
+          Cat(phtBanks(bank).rdata(phtValidBit), phtBanks(bank).rdata(2))
       }
     }
 
-    val predictedTaken = Mux(
-      queryPhtValidReg(i),
-      phtTaken(i),
-      false.B,
-    )
+    phtTaken(i) := phtStates(i)(1) && phtStates(i)(0)
+    val predictedTaken = phtTaken(i)
     val differentResult = queryGshareReg(i) =/= predictedTaken
     val selected = Mux(queryUseGshareReg(i), queryGshareReg(i), predictedTaken)
     freshPrediction(i) := Cat(
@@ -291,9 +290,7 @@ class Predictor extends Module {
     }
   }
 
-  val activePhtIndex = Wire(UInt(log2Ceil(KSIZE).W))
   val activeBankAddress = Wire(UInt(bankAddressBits.W))
-  activePhtIndex := Cat(activeSubaddr, activeLocalHistory)
   activeBankAddress := Cat(
     activeSubaddr(PBIT - 1, bankSelectBits),
     activeLocalHistory,
@@ -301,17 +298,17 @@ class Predictor extends Module {
 
   when(updateState === sUpdateRead) {
     val activeBank = activeSubaddr(bankSelectBits - 1, 0)
-    val oldCounter = Wire(UInt(3.W))
-    oldCounter := phtBanks(0).rdata
+    val oldWord = Wire(UInt(phtWordWidth.W))
+    oldWord := phtBanks(0).rdata
     for (bank <- 1 until bankCount) {
       when(activeBank === bank.U) {
-        oldCounter := phtBanks(bank).rdata
+        oldWord := phtBanks(bank).rdata
       }
     }
     // An untrained SRAM entry contains X. Start it from the architectural
     // weak-not-taken value used by the previous register PHT.
     val effectiveOldCounter =
-      Mux(phtValid(activePhtIndex), oldCounter, 1.U)
+      Mux(oldWord(phtValidBit), oldWord(2, 0), 1.U)
     val newCounter = Mux(
       activeTaken,
       Mux(effectiveOldCounter === 3.U, 3.U, effectiveOldCounter + 1.U),
@@ -324,10 +321,9 @@ class Predictor extends Module {
         phtBanks(bank).we := true.B
         phtBanks(bank).wmask := 1.U
         phtBanks(bank).addr := activeBankAddress
-        phtBanks(bank).wdata := newCounter
+        phtBanks(bank).wdata := Cat(true.B, newCounter)
       }
     }
-    phtValid(activePhtIndex) := true.B
     updateState := sIdle
   }
 

@@ -33,7 +33,28 @@ object Generate extends App {
     gen = new cpu2026.StudentTop,
     firtoolOpts = firtoolOpts,
   )
+
+  /*
+   * Verilator normally inlines most modules into one C++ model class. This CPU
+   * has enough state and combinational logic that compiling that single class
+   * can exhaust the online judge's memory limit even when its RTL is valid.
+   * Keep every synthesized module as a distinct Verilator class; this costs a
+   * small amount of simulation performance and substantially lowers the peak
+   * memory needed by the parallel C++ build.
+   */
+  val noInlineSv = sv.replace(
+    "\n);\n",
+    "\n);\n  /* verilator no_inline_module */\n",
+  )
+
+  /*
+   * CIRCT emits dependency modules before the top. Verilator's DECLFILENAME
+   * warning compares the first module with the file name even though the
+   * requested top module is student_top, so suppress only that cosmetic warning.
+   */
+  val finalSv =
+    "/* verilator lint_off DECLFILENAME */\n" + noInlineSv
   val file = new java.io.File(outDir, "student_top.sv")
-  java.nio.file.Files.write(file.toPath, sv.getBytes("UTF-8"))
+  java.nio.file.Files.write(file.toPath, finalSv.getBytes("UTF-8"))
   println(s"[gen] $file")
 }
