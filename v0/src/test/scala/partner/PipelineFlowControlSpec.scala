@@ -18,7 +18,8 @@ class PipelineFlowControlSpec extends AnyFlatSpec with Matchers {
     inIds:    Seq[Int],
     opcodes:  Seq[Int],
     outReady: Boolean,
-    flush:    Boolean = false
+    flush:    Boolean = false,
+    predictions: Seq[Int] = Seq.empty
   ): Unit = {
     dut.io.in_valid.poke(inValid.B)
     dut.io.valid_num.poke(inNum.U)
@@ -27,6 +28,7 @@ class PipelineFlowControlSpec extends AnyFlatSpec with Matchers {
     for (i <- 0 until 4) {
       dut.io.id(i).poke(inIds.lift(i).getOrElse(0).U)
       dut.io.opcode(i).poke(opcodes.lift(i).getOrElse(0).U)
+      dut.io.prediction(i).poke(predictions.lift(i).getOrElse(0).U)
     }
   }
 
@@ -134,7 +136,8 @@ class PipelineFlowControlSpec extends AnyFlatSpec with Matchers {
         inNum = 2,
         inIds = Seq(0x100, 0x104),
         opcodes = Seq(0x00100093, 0x00200113),
-        outReady = false
+        outReady = false,
+        predictions = Seq(0xa5a5, 0x5a5a)
       )
       dut.clock.step()
 
@@ -142,6 +145,8 @@ class PipelineFlowControlSpec extends AnyFlatSpec with Matchers {
       dut.io.out_num.expect(2.U)
       dut.io.out_id(0).expect(0x100.U)
       dut.io.out_id(1).expect(0x104.U)
+      dut.io.out_prediction(0).expect(0xa5a5.U)
+      dut.io.out_prediction(1).expect(0x5a5a.U)
       dut.io.out_op(0).type_.peek().litValue shouldBe OP_TYPE.OP_ADDI.litValue
       dut.io.in_ready.expect(false.B, "已占用且下游未 ready 时必须反压取指")
 

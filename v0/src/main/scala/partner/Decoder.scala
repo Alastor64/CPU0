@@ -13,6 +13,7 @@ import Config.CPUConfig._
 import chisel3._
 import chisel3.util._
 import Config.CPUConfig.issueWidth
+import _root_.FetchControl.FetchPredecode
 
 
 class Decoder extends Module{
@@ -22,12 +23,17 @@ class Decoder extends Module{
         val valid_num = Input(UInt(32.W))
         val id = Input(Vec(issueWidth, UInt(32.W)))
         val opcode = Input(Vec(issueWidth, UInt(32.W)))
+        // Snapshot the branch prediction with the instruction. Re-querying at
+        // issue time can observe a newer predictor state than the one used by
+        // the fetch redirect.
+        val prediction = Input(Vec(issueWidth, UInt(32.W)))
 
         val flush_valid = Input(Bool())
         val out_valid = Output(Bool())
         val out_ready = Input(Bool())
         val out_num = Output(UInt(32.W))
         val out_id = Output(Vec(issueWidth, UInt(32.W)))
+        val out_prediction = Output(Vec(issueWidth, UInt(32.W)))
         val out_op = Output(Vec(issueWidth, new Op))
     })
     //init
@@ -35,6 +41,7 @@ class Decoder extends Module{
     val valid_num_reg=RegInit(0.U(32.W))
     val opcode_reg=Reg(Vec(issueWidth,UInt(32.W)))
     val id_reg=Reg(Vec(issueWidth,UInt(32.W)))
+    val prediction_reg = RegInit(VecInit(Seq.fill(issueWidth)(0.U(32.W))))
     // All signed immediates leave the decoder as complete 32-bit two's
     // complement values. Consumers can therefore use the field directly.
     def signExtend(value: UInt): UInt =
@@ -47,22 +54,10 @@ class Decoder extends Module{
         signExtend(Cat(instruction(31,25), instruction(11,7)))
 
     def immediateB(instruction: UInt): UInt =
-        signExtend(Cat(
-            instruction(31),
-            instruction(7),
-            instruction(30,25),
-            instruction(11,8),
-            0.U(1.W),
-        ))
+        FetchPredecode.branchImmediate(instruction)
 
     def immediateJ(instruction: UInt): UInt =
-        signExtend(Cat(
-            instruction(31),
-            instruction(19,12),
-            instruction(20),
-            instruction(30,21),
-            0.U(1.W),
-        ))
+        FetchPredecode.jalImmediate(instruction)
     // One-entry elastic buffer between the fetcher and the issuer queue.
     io.in_ready := !io.flush_valid && (!occupied || io.out_ready)
     io.out_valid := occupied && !io.flush_valid
@@ -80,6 +75,7 @@ class Decoder extends Module{
             valid_num_reg := io.valid_num
             opcode_reg := io.opcode
             id_reg := io.id
+            prediction_reg := io.prediction
             occupied := true.B
         }
     }
@@ -88,6 +84,7 @@ class Decoder extends Module{
     io.out_num:=valid_num_reg
     for (i<-0 until issueWidth){
         io.out_id(i):=id_reg(i)
+        io.out_prediction(i):=prediction_reg(i)
         io.out_op(i).id:=0.U(32.W)
         // Invalid instructions and unsupported opcodes must still produce a
         // deterministic, inert decode result.
