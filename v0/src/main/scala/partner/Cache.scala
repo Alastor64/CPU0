@@ -110,6 +110,19 @@ class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
     set_idx := io.addr(setBIT-1,0)
     tag := io.addr(31-offsetBIT,setBIT)
 
+    // SRAM 读有一拍延迟：接收新请求时立即启动读，下一拍再用 rdata
+    // 比较 tag。父模块也恰好在请求后的下一拍采样 out_hit/out_rdata。
+    when (waiting===0.U && (io.load_valid || io.store_valid)) {
+        for (i<-0 until lineNum){
+            tagRams(i).en:=true.B
+            tagRams(i).we:=false.B
+            tagRams(i).addr:=set_idx
+            dataRams(i).en:=true.B
+            dataRams(i).we:=false.B
+            dataRams(i).addr:=set_idx
+        }
+    }
+
     when (waiting===0.U||(waiting===1.U&&io.clear_status===true.B))
     {
         waiting:=0.U
