@@ -167,10 +167,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     decoder.io.id := 0.U.asTypeOf(decoder.io.id)
     decoder.io.opcode := 0.U.asTypeOf(decoder.io.opcode)
 
-    // The candidate PCs are known before I-cache data returns, so the
-    // direction predictor can run in the fetch stage rather than after decode.
+    // qaddrs is the next fetch group, not the currently executing PC. The
+    // predictor and I-cache issue their synchronous reads together so both
+    // results arrive in the same cycle.
     for (i <- 0 until issueWidth) {
-        predictor.io.qaddrs(i) := pc.value + (4 * i).U
+        predictor.io.qaddrs(i) := 0.U
         fetchControl.io.pcs(i) := pc.value + (4 * i).U
     }
     fetchControl.io.instructions := 0.U.asTypeOf(fetchControl.io.instructions)
@@ -178,6 +179,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
     // Predictor queries and updates are disabled unless the main path
     // explicitly enables them below.
+    predictor.io.queryValid := false.B
     predictor.io.uvalid := false.B
     predictor.io.uaddr := 0.U
     predictor.io.ures := 0.U
@@ -249,18 +251,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     // redirect 到达时若仍有 AXI 读事务，先记住目标，事务排空后再更新 PC。
     val fetcher_redirect_pending = RegInit(false.B)
     val fetcher_redirect_pc = Reg(UInt(32.W))
-    // Decoder may backpressure for several cycles while committed branches
-    // update the predictor. Keep the prediction that selected this fetch path.
-    val fetch_prediction = RegInit(VecInit(Seq.fill(issueWidth)(0.U(32.W))))
-    val fetch_prediction_pc = RegInit(0.U(32.W))
-    val fetch_prediction_valid = RegInit(false.B)
+    // The predictor holds its latest result until a newer query completes.
+    // Matching the PC tag prevents a stale group from influencing fetch.
     val current_prediction = Wire(Vec(issueWidth, UInt(32.W)))
+    val predictionMatchesPc =
+        predictor.io.outValid && predictor.io.outPc === pc.value
     for (i <- 0 until issueWidth) {
-        current_prediction(i) := Mux(
-            fetch_prediction_valid && fetch_prediction_pc === pc.value,
-            fetch_prediction(i),
-            predictor.io.out(i)
-        )
+        current_prediction(i) :=
+            Mux(predictionMatchesPc, predictor.io.out(i), 0.U)
     }
     decoder.io.prediction := current_prediction
     fetchControl.io.predictions := current_prediction
@@ -291,11 +289,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     fetcher_next := 0.U
     new_pc_val := 0.U
     fetch_clear_status := false.B
-    when (!fetch_prediction_valid || fetch_prediction_pc =/= pc.value) {
-        fetch_prediction := predictor.io.out
-        fetch_prediction_pc := pc.value
-        fetch_prediction_valid := true.B
-    }
     // Only an architectural flush may cancel an outstanding AXI read.
     fetcher_redirect := flush
 
@@ -410,8 +403,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 Icache(i).io.clear_status:=true.B
             }
             Dcache.io.clear_status:=true.B
-            fetch_prediction_valid:=false.B
-
             // AXI 读一旦发出就不能撤销。保持旧 AR 稳定并排空旧 R，
             // 等最后一个响应握手后才在下一拍切换到 newaddr。
             when (fetcher_waiting===0.U) {
@@ -511,7 +502,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 // Decoder 不 ready 时保持 PC 不变，实现 fetch->decode 反压。
                 when (decoder.io.in_valid && decoder.io.in_ready &&
                     !fetcher_redirect) {
-                    fetch_prediction_valid := false.B
                     when (fetchControl.io.redirect) {
                         new_pc_val := fetchControl.io.redirectTarget
                     }.otherwise {
@@ -554,7 +544,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         fetcher_waiting:=0.U
                         fetcher_next:=0.U
                         when (!fetcher_discard) {
-                            fetch_prediction_valid:=false.B
                             when (fetchControl.io.redirect) {
                                 new_pc_val:=fetchControl.io.redirectTarget
                             }.otherwise {
@@ -646,9 +635,13 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 // 下一拍状态 0 使用这些查询结果计算前缀命中数。
                 when (fetcher_next===0.U && !fetcher_redirect_pending)
                 {
+                    when (!predictor.io.stall) {
+                        predictor.io.queryValid := true.B
+                    }
                     for (l<-0 until issueWidth){
                         when (new_pc_val(3,2)===l.U){
                             for (i<-0 until issueWidth){
+                                predictor.io.qaddrs(i) := new_pc_val+(i*4).U
                                 Icache((i+l)%issueWidth).io.load_valid:=true.B
                                 Icache((i+l)%issueWidth).io.addr:=new_pc_val+(i*4).U
                                 // 从内存取回的是完整 32 位指令字；回填时必须写入全部四字节。
