@@ -62,6 +62,12 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val flush=RegInit(false.B)
     val flush_val=Reg(SInt(32.W))
     val newaddr=Reg(UInt(32.W))
+    // Committer 的 flush 在下一拍处理；JALR 的返回地址写回与 flush
+    // 同拍产生，因此必须一起寄存，不能只保存 PC 和 flush 标记。
+    val flush_reg_valid = RegInit(false.B)
+    val flush_reg_id = RegInit(0.U(5.W))
+    val flush_reg_value = RegInit(0.U(32.W))
+    val flush_reg_prod = RegInit(0.U(32.W))
     // Fetcher 的下一拍 PC。跳转、分支预测和 flush 都通过该路径更新 PC。
     val new_pc_val = Wire(UInt(32.W))
     val Icache_out_num = Wire(UInt(32.W))
@@ -104,6 +110,10 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     flush:=committer.io.out_flush
     flush_val:=committer.io.out_flushval.asSInt
     newaddr:=committer.io.out_newaddr
+    flush_reg_valid:=committer.io.out_reg_valid
+    flush_reg_id:=committer.io.out_reg_id
+    flush_reg_value:=committer.io.out_reg_val
+    flush_reg_prod:=committer.io.out_reg_prod
     // Committer 回滚必须丢弃 Decoder 中尚未进入 Issuer 的年轻指令。
     // JALR 同样在 Commit 点才产生 redirect，因此不再需要 Issue 特例。
     decoder.io.flush_valid := flush
@@ -351,11 +361,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
             issuer.io.valid_num:=0.U
             // JALR 在同一拍既 flush 年轻指令，又提交自己的返回地址。
             // 普通分支 flush 没有寄存器写回，本路径自然跳过。
-            when (committer.io.out_reg_valid===true.B) {
+            when (flush_reg_valid===true.B) {
                 val id=Wire(UInt(5.W))
-                id:=committer.io.out_reg_id
-                regs(id).value := committer.io.out_reg_val
-                when (regs(id).prod.asUInt===committer.io.out_reg_prod &&
+                id:=flush_reg_id
+                regs(id).value := flush_reg_value
+                when (regs(id).prod.asUInt===flush_reg_prod &&
                     issuer.io.out_prod_valid(id)===false.B) {
                     regs(id).prod := -1.S(32.W)
                 }
