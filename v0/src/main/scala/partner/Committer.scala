@@ -12,6 +12,7 @@ import Config._
 import Config.CPUConfig._
 import ROB._
 import CDB._
+import _root_.MemoryLane.MemoryLane
 import chisel3._
 
 class Committer extends Module{//needs to add branch predictor!
@@ -81,6 +82,21 @@ class Committer extends Module{//needs to add branch predictor!
   
   val waiting=RegInit(false.B)
 
+  /** 访存请求始终携带完整 word；地址低两位在这里转换成数据移位和 mask。 */
+  private def alignedStoreRequest(rb: ROB): (UInt, UInt, UInt) = {
+    val address = rb.dest.asUInt
+    val widthMask = Mux(
+      rb.type_ === 1.S,
+      1.U(4.W),
+      Mux(rb.type_ === 2.S, 3.U(4.W), 15.U(4.W))
+    )
+    (
+      address,
+      MemoryLane.alignStoreData(rb.value, address),
+      MemoryLane.alignStoreMask(widthMask, address)
+    )
+  }
+
   when (io.clear_valid===true.B){//flush
     l:=0.U
     r:=0.U
@@ -128,10 +144,11 @@ class Committer extends Module{//needs to add branch predictor!
                 io.out_newaddr:=rb.target
             }.elsewhen (rb.type_ > 0.S)//store
             {
+                val (storeAddress, storeData, storeMask) = alignedStoreRequest(rb)
                 io.out_store_valid:=true.B
-                io.out_store_addr:=rb.dest.asUInt
-                io.out_store_value:=rb.value
-                io.out_store_mask:=Mux(rb.type_ === 1.S, 1.U, Mux(rb.type_ === 2.S, 3.U, 15.U))
+                io.out_store_addr:=storeAddress
+                io.out_store_value:=storeData
+                io.out_store_mask:=storeMask
                 cur_rb:=rb
                 waiting:=1.U
             }.elsewhen (rb.type_ === 0.S)//alu
@@ -163,10 +180,11 @@ class Committer extends Module{//needs to add branch predictor!
         when (io.store_received===true.B){
             waiting := false.B
         }.otherwise{
+            val (storeAddress, storeData, storeMask) = alignedStoreRequest(cur_rb)
             io.out_store_valid:=true.B
-            io.out_store_addr:=cur_rb.dest.asUInt
-            io.out_store_value:=cur_rb.value
-            io.out_store_mask:=Mux(cur_rb.type_ === 1.S, 1.U, Mux(cur_rb.type_ === 2.S, 3.U, 15.U))
+            io.out_store_addr:=storeAddress
+            io.out_store_value:=storeData
+            io.out_store_mask:=storeMask
         }
     }
   }

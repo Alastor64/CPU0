@@ -13,6 +13,7 @@ import CDB._
 import ROB._
 import Config._
 import Config.CPUConfig._
+import _root_.MemoryLane.MemoryLane
 import chisel3._
 import chisel3.util._
 class Adder extends Module {
@@ -777,22 +778,23 @@ class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
       }
       when (canOutput===true.B&&lsuIO.addr_valid===true.B){
         io.out_cdb.id:=cur_rs.id
+        val laneWord = MemoryLane.selectLoadWord(lsuIO.addr_value, wanted)
         switch (cur_rs.type_)
         {
           is (OP_TYPE.OP_LB){
-            io.out_cdb.value:=Cat(Fill(24, lsuIO.addr_value(7)), lsuIO.addr_value(7,0))
+            io.out_cdb.value:=Cat(Fill(24, laneWord(7)), laneWord(7,0))
           }
           is (OP_TYPE.OP_LBU){
-            io.out_cdb.value:=lsuIO.addr_value(7,0)
+            io.out_cdb.value:=Cat(0.U(24.W), laneWord(7,0))
           }
           is (OP_TYPE.OP_LH){
-            io.out_cdb.value:=Cat(Fill(16, lsuIO.addr_value(15)), lsuIO.addr_value(15,0))
+            io.out_cdb.value:=Cat(Fill(16, laneWord(15)), laneWord(15,0))
           }
           is (OP_TYPE.OP_LHU){
-            io.out_cdb.value:=lsuIO.addr_value(15,0)
+            io.out_cdb.value:=Cat(0.U(16.W), laneWord(15,0))
           }
           is (OP_TYPE.OP_LW){
-            io.out_cdb.value:=lsuIO.addr_value
+            io.out_cdb.value:=laneWord
           }
         }
         io.out_cdb.dest:=cur_rs.dest
