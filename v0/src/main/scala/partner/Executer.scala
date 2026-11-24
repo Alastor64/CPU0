@@ -287,9 +287,16 @@ class Executer(val rsDepth: Int = RSWidth) extends Module{
   /**
     * 在有限数量未完成指令的窗口中，按 32 位回绕差值判断发射年龄。
     * 不能直接使用无符号 `<`，否则跨过 0xffffffff 时会把新指令误判为旧指令。
+    *
+    * 这里只计算减法的最高位，而不是生成完整的 `a - b` 后再取 `[31]`。
+    * 减法第 31 位等于 `a31 ^ b31 ^ borrow31`，其中 borrow31 由低 31 位
+    * 的 unsigned 比较给出。这样既保持回绕语义，也避免综合器为每一次年龄
+    * 比较保留 32 位减法结果和 31 位无用逻辑。
     */
-  private def isOlder(a: UInt, b: UInt): Bool =
-    (a - b)(idWidth - 1).asBool
+  private def isOlder(a: UInt, b: UInt): Bool = {
+    val borrowIntoMsb = a(idWidth - 2, 0) < b(idWidth - 2, 0)
+    a(idWidth - 1) ^ b(idWidth - 1) ^ borrowIntoMsb
+  }
 
   // 空闲槽位由 valid bitmap 表示，不再通过整项搬运维持连续队列。
   val rss = Reg(Vec(rsDepth, new RS()))
