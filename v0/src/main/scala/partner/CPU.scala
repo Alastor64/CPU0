@@ -718,12 +718,12 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 when (lsu_waiting===0.U){
                     when (lsu.lsuIO.out_valid===true.B&&Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B&&committer_waiting===0.U&&committer.io.out_store_valid===false.B){//can load only when no store
                         Dcache.io.load_valid:=true.B
-                        Dcache.io.addr := lsu.lsuIO.out_addr(31,2)
+                        Dcache.io.addr := lsu.lsuIO.out_addr(6,0)
                         // Load miss 的返回值是完整 32 位字，回填四个字节。
                         Dcache.io.wmask := 15.U
                         // AXI 返回完整 word，地址必须按 word 对齐；LSU 仍用
                         // 原始字节地址从返回 word 中选择目标 lane。
-                        lsu_lst_addr := Cat(lsu.lsuIO.out_addr(31,2),0.U(2.W))
+                        lsu_lst_addr := Cat(lsu.lsuIO.out_addr,0.U(2.W))
                         lsu_waiting:=1.U
                         lsu.lsuIO.addr_received:=true.B
                     }

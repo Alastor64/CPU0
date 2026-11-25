@@ -748,7 +748,8 @@ class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
     val addr_received = Input(Bool())
     val addr_value = Input(UInt(32.W))
     val out_valid = Output(Bool())
-    val out_addr = Output(UInt(32.W))
+    // Cache 只使用 word 地址，低两位由 LSU 内部的完整地址选择 load lane。
+    val out_addr = Output(UInt(30.W))
   })
   val res=Wire(UInt(32.W))
   val wanted=Reg(UInt(32.W))
@@ -756,7 +757,7 @@ class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
   val canOutput= Wire(Bool())
   canOutput:=true.B
   lsuIO.out_valid:=false.B
-  lsuIO.out_addr:=0.U
+  lsuIO.out_addr:=0.U(30.W)
   res:=0.U
 
   when (io.clear_valid===true.B){
@@ -769,7 +770,7 @@ class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
         // it with addr_received would feed the parent's acknowledgement
         // (which itself depends on out_valid) directly back into out_valid.
         lsuIO.out_valid:=true.B
-        lsuIO.out_addr:=wanted
+        lsuIO.out_addr:=wanted(31, 2)
         canOutput:=false.B
         when (lsuIO.addr_received===true.B)
         {
@@ -837,7 +838,7 @@ class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
       {
           when (i.U < len && vals(i)===0x100.U)
           {
-            lsuIO.out_addr:=L
+            lsuIO.out_addr:=L(31, 2)
             lsuIO.out_valid:=true.B
             wanted:=L
             waiting:=true.B
