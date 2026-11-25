@@ -278,7 +278,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val lsu_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for memory, 3 got memory, storing into Dcache
     val lsu_discard_pending = RegInit(false.B)
     val lsu_lst_addr=Reg(UInt(32.W))
-    val committer_waiting=RegInit(0.U(2.W))//0 initial state, 1 waiting for Dcache, 2 waiting for Dcache write back
+    // 0: 空闲；1: 等待 Dcache 命中判断；2: store miss 发起整字读取；
+    // 3: store miss 等待读数据并完成带 mask 的 cache 安装。
+    val committer_waiting=RegInit(0.U(2.W))
     val Dcache_waiting = RegInit(0.U(2.W))
 
     // Exit stores bypass the D-cache. Capture the complete store payload at
@@ -495,7 +497,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     cachesReady &&
                     Dcache_waiting===false.B &&
                     Dcache.io.out_wvalid===false.B && lsu_waiting===0.U &&
-                    lsu.lsuIO.out_valid===false.B){//read instructions from memory
+                    lsu.lsuIO.out_valid===false.B &&
+                    committer_waiting<2.U){//read instructions from memory
                     io.araddr:=pc.value
                     io.arvalid:=true.B
                     // AR 可能在发请求的同一拍完成握手；只有未握手时才保持状态 1。
@@ -536,8 +539,12 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }
                 }.elsewhen(fetcher_waiting===2.U){
                     // 状态 2：正常取指时 RREADY 跟随 Decoder 的反压；
-                    // 若正在 redirect，则无条件接收并丢弃旧响应。
-                    val fetcher_discard = fetcher_redirect_pending||fetcher_redirect
+                    // redirect 或 Dcache store miss 等待读通道时，无条件接收
+                    // 在途的旧取指响应。后者避免 Decoder 反压与 store 回填
+                    // 互相等待；store 完成前的取指已被禁止，之后会从原 PC 重取。
+                    val fetcher_discard =
+                        fetcher_redirect_pending||fetcher_redirect||
+                        committer_waiting>=2.U
                     fetchControl.io.instructions(0):=io.rdata
                     fetchControl.io.hits(0):=io.rvalid && !fetcher_discard
                     decoder.io.valid_num:=
@@ -713,7 +720,9 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                         Dcache.io.addr := lsu.lsuIO.out_addr(31,2)
                         // Load miss 的返回值是完整 32 位字，回填四个字节。
                         Dcache.io.wmask := 15.U
-                        lsu_lst_addr := lsu.lsuIO.out_addr
+                        // AXI 返回完整 word，地址必须按 word 对齐；LSU 仍用
+                        // 原始字节地址从返回 word 中选择目标 lane。
+                        lsu_lst_addr := Cat(lsu.lsuIO.out_addr(31,2),0.U(2.W))
                         lsu_waiting:=1.U
                         lsu.lsuIO.addr_received:=true.B
                     }
@@ -771,7 +780,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 // Fetch 拥有唯一的读事务时，不能让后续 LSU 仲裁覆盖 RREADY。
                 // 这里只依赖状态寄存器，避免形成 rready -> fetcher_next 的组合环。
                 when (fetcher_waiting===2.U) {
-                    io.rready:=fetcher_redirect_pending||fetcher_redirect||decoder.io.in_ready
+                    io.rready:=fetcher_redirect_pending||fetcher_redirect||
+                        committer_waiting>=2.U||decoder.io.in_ready
                 }
 
                 //broadcast CDBs
@@ -802,7 +812,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 committer.io.store_received:=false.B
                 when (committer_waiting===0.U){
                     when (committer.io.out_store_valid===true.B&&exit_store_commit===false.B&&
-                        Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B){//store
+                        Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B&&
+                        lsu_waiting===0.U){//store
                         Dcache.io.store_valid := true.B
                         Dcache.io.addr := committer.io.out_store_addr(31,2)
                         Dcache.io.wdata := committer.io.out_store_value
@@ -824,8 +835,29 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                     }.otherwise{
                         committer_waiting:=2.U
                     }
+                }.elsewhen (committer_waiting===2.U){
+                    // store miss 必须先从内存取回完整 word。共享读通道由
+                    // Fetch、LSU 和这里按状态串行使用，地址在握手前保持稳定。
+                    when (fetcher_waiting===0.U&&lsu_waiting===0.U){
+                        // AXI 读地址必须按 word 对齐；store mask 仍保留原始
+                        // 字节位置，供 Cache 在写入口选择 store 数据。
+                        io.araddr:=Cat(
+                            committer.io.out_store_addr(31,2),
+                            0.U(2.W)
+                        )
+                        io.arvalid:=true.B
+                        when (io.arready===true.B){
+                            io.rready:=true.B
+                            committer_waiting:=3.U
+                        }
+                    }
                 }.otherwise{
-                    when (Dcache_waiting===0.U&&Dcache.io.out_wvalid===false.B){
+                    // R 数据返回的同一拍交给 Dcache 做字节合并，并确认 store。
+                    // Cache 在本拍结束完成整字安装，因此后续访存不会看到旧值。
+                    io.rready:=true.B
+                    when (io.rvalid===true.B){
+                        Dcache.io.new_valid:=true.B
+                        Dcache.io.new_data:=io.rdata
                         committer_waiting:=0.U
                         committer.io.store_received:=true.B
                     }
