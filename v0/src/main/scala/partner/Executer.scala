@@ -824,7 +824,8 @@ class LSU(rsDepth: Int = RSWidth) extends Executer(rsDepth) {
               val offset = Wire(UInt(32.W))
               offset:=rb.dest.asUInt+j.U-L
               when (j.S < rb.type_ && offset.asSInt >= 0.S && offset< len){
-                vals(offset):=rb.value(8*j+7,8*j)
+                // The guarded offset selects one of four byte lanes.
+                vals(offset(1,0)):=rb.value(8*j+7,8*j)
               }
             }
           }

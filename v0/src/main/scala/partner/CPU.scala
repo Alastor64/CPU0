@@ -618,13 +618,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                             for (j<-0 until ALU_NUM)//indexing workaround 
                             {
                                 when (j.U===tp){
-                                    alus(j).io.rs(cnts(i)(j)):=issuer.io.out_executer_RS(i)
+                                    // Four queue entries need a two-bit index.
+                                    alus(j).io.rs(cnts(i)(j)(1,0)):=issuer.io.out_executer_RS(i)
                                 }
                             }
                         }.elsewhen(tp===ALU_NUM.U){
-                            lsu.io.rs(cnts(i)(ALU_NUM)):=issuer.io.out_executer_RS(i)
+                            lsu.io.rs(cnts(i)(ALU_NUM)(1,0)):=issuer.io.out_executer_RS(i)
                         }.otherwise{
-                            bru.io.rs(cnts(i)(ALU_NUM+1)):=issuer.io.out_executer_RS(i)
+                            bru.io.rs(cnts(i)(ALU_NUM+1)(1,0)):=issuer.io.out_executer_RS(i)
                         }
                         for (j<-0 until ALU_NUM+2){
                             when (tp===j.U){
