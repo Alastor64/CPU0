@@ -3,8 +3,9 @@
 #
 # 用法:
 #   scripts/publish.sh               # 生成 + 复制 + 维护 filelist，不提交
-#   scripts/publish.sh --dry-run     # 只报告会做什么，不写任何文件
+#   scripts/publish.sh --dry-run     # 只报告会做什么，不改提交仓库
 #   scripts/publish.sh --commit      # 额外在提交仓库里提交这两个文件
+#   scripts/publish.sh --push        # 提交并推送到提交仓库的个人远端 origin
 #
 # 为什么要有这个脚本：OJ 要的是「框架仓库 + 生成的 RTL + filelist 条目」，
 # 而我们的 Chisel 源码在另一个仓库里。手工拷贝容易漏、也难复盘，
@@ -27,13 +28,20 @@ filelist_rel=verilog/filelist.f
 
 dry_run=0
 do_commit=0
+do_push=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) dry_run=1 ;;
     --commit)  do_commit=1 ;;
-    *) echo "用法: $0 [--dry-run] [--commit]" >&2; exit 2 ;;
+    --push)    do_push=1 ;;
+    *) echo "用法: $0 [--dry-run] [--commit] [--push]" >&2; exit 2 ;;
   esac
 done
+
+# push 隐含 commit，避免推送一个没有包含本次生成物的提交。
+if [ "$do_push" = 1 ]; then
+  do_commit=1
+fi
 
 submit=${CPU_SUBMIT_DIR:-"$MY_ROOT/../CPU-submit"}
 if [ ! -d "$submit/.git" ]; then
@@ -42,6 +50,10 @@ if [ ! -d "$submit/.git" ]; then
 fi
 if [ ! -f "$submit/$filelist_rel" ]; then
   echo "publish.sh: $submit 不像助教框架仓库（缺 $filelist_rel）" >&2
+  exit 2
+fi
+if [ "$do_push" = 1 ] && ! git -C "$submit" remote get-url origin >/dev/null 2>&1; then
+  echo "publish.sh: $submit 没有个人远端 origin，无法推送" >&2
   exit 2
 fi
 
@@ -83,6 +95,13 @@ message="Generate Verilog from CPU0@$source_hash"
 
 if [ "$dry_run" = 1 ]; then
   echo "[dry-run] 建议的提交信息：$message"
+  if [ "$do_commit" = 1 ]; then
+    echo "[dry-run] 会在提交仓库提交上述两个文件"
+  fi
+  if [ "$do_push" = 1 ]; then
+    submit_branch=$(git -C "$submit" symbolic-ref --short HEAD)
+    echo "[dry-run] 会推送提交仓库到 origin/$submit_branch"
+  fi
   exit 0
 fi
 
@@ -93,9 +112,20 @@ if [ "$do_commit" = 1 ]; then
     echo "[publish] 没有需要提交的改动"
   else
     git -C "$submit" commit -m "$message"
-    echo "[publish] 已在提交仓库提交：$message（别忘了 git push）"
+    if [ "$do_push" = 1 ]; then
+      echo "[publish] 已在提交仓库提交：$message"
+    else
+      echo "[publish] 已在提交仓库提交：$message（别忘了 git push）"
+    fi
   fi
 else
   echo "[publish] 建议的提交信息：$message"
   git -C "$submit" status --short -- "$generated_rel" "$filelist_rel" || true
+fi
+
+if [ "$do_push" = 1 ]; then
+  submit_branch=$(git -C "$submit" symbolic-ref --short HEAD)
+  # 只推个人 fork；提交仓库里另有只读的 upstream，绝不能推过去。
+  git -C "$submit" push origin "$submit_branch"
+  echo "[publish] 已推送提交仓库到 origin/$submit_branch"
 fi

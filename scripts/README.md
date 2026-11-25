@@ -1,6 +1,6 @@
 # 共享脚本
 
-这三个脚本是 `v0`（CPU 本体）和 `learn`（学 Chisel）共用的流程。
+这些脚本是 `v0`（CPU 本体）和 `learn`（学 Chisel）共用的流程。
 它们跑在 WSL 里，用的是课程工具链 AppImage 的解包产物（`tools/cpu2026`）。
 
 | 脚本 | 作用 | 一句话 |
@@ -11,6 +11,20 @@
 | `gen.sh` | Chisel → SystemVerilog | 调 sbt 运行工程里的导出主类 |
 | `sim.sh` | Verilator 仿真 | 编译「设计 + 测试台」并运行 |
 | `synth.sh` | 面积 + 频率 | Yosys 映射到 ASAP7 标准单元，OpenSTA 算时序 |
+| `publish.sh` | 发布到提交仓库 | 生成 RTL，维护 `filelist`，可选提交和推送 |
+
+## 发布到 CPU-submit
+
+`publish.sh` 默认更新同级目录下的 `CPU-submit`，但不提交或推送：
+
+```sh
+scripts/publish.sh --dry-run   # 检查要更新什么
+scripts/publish.sh --commit    # 更新并在本地提交
+scripts/publish.sh --push      # 更新、提交并推送到个人远端 origin
+```
+
+`--push` 隐含 `--commit`，只会使用 `CPU-submit` 的 `origin`，不会推送只读的
+`upstream`。
 
 ## 编辑器（Metals）
 
