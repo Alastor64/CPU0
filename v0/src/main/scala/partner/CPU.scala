@@ -80,9 +80,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     val opcode=Wire(SInt(32.W))
 
     // 四条指令槽各有一个 Icache 实例，按 PC[3:2] 循环映射到连续四字。
-    // 每个 Cache(4) 内部是四路组相联，因此这里不是简单的四行直接映射。
-    val Icache=Seq.tabulate(issueWidth) { i =>Module(new Cache(4))}//Icache(i) manages start addr mod 16 = 4i
-    val Dcache=Module(new Cache(2))
+    // I-Cache 不维护 dirty 位；只有 D-Cache 生成脏块写回逻辑。
+    val Icache=Seq.tabulate(issueWidth) { i =>
+        Module(new Cache(4, hasDirty = false))
+    }//Icache(i) manages start addr mod 16 = 4i
+    val Dcache=Module(new Cache(2, hasDirty = true))
     val committer=Module(new Committer)
     val alus = Seq.tabulate(ALU_NUM) { i =>Module(new ALU(i))}
     val lsu=Module(new LSU)
@@ -249,6 +251,10 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     // redirect/flush 只能在确认没有未完成读事务时直接清零；否则必须先排空
     // 旧请求，避免把旧地址的 rdata 配给重定向后的新 PC。
     val fetcher_waiting = RegInit(0.U(2.W))
+    // SRAM 中的 valid 需要显式清零。清零完成前不能发起 I-Cache 查询，
+    // 否则内存回填可能被初始化写操作覆盖。
+    val cachesReady =
+        Icache.map(_.io.out_ready).reduce(_ && _) && Dcache.io.out_ready
     // redirect 到达时若仍有 AXI 读事务，先记住目标，事务排空后再更新 PC。
     val fetcher_redirect_pending = RegInit(false.B)
     val fetcher_redirect_pc = Reg(UInt(32.W))
@@ -462,7 +468,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 fetcher_redirect_pending:=false.B
                 new_pc_val:=fetcher_redirect_pc
                 decoder.io.in_valid:=false.B
-            }.elsewhen(fetcher_waiting===0.U)
+            }.elsewhen(fetcher_waiting===0.U && cachesReady)
             {
                 // PC[3:2] 决定四个逻辑指令槽在 Icache 实例上的循环起点。
                 // 例如起点为 3 时，槽位依次访问 Icache 3、0、1、2。
@@ -486,6 +492,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 // 首字 miss 时从内存取一条指令。Fetcher 与 LSU/Dcache
                 // 共享 AXI 读通道，因此必须先确认其他读事务和写回路径空闲。
                 when (fetchControl.io.validNum===0.U && !fetcher_redirect &&
+                    cachesReady &&
                     Dcache_waiting===false.B &&
                     Dcache.io.out_wvalid===false.B && lsu_waiting===0.U &&
                     lsu.lsuIO.out_valid===false.B){//read instructions from memory
@@ -636,7 +643,8 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
                 // 状态 0 时提前为 new_pc_val 连续四个字发起 Icache 查询。
                 // 下一拍状态 0 使用这些查询结果计算前缀命中数。
-                when (fetcher_next===0.U && !fetcher_redirect_pending)
+                when (fetcher_next===0.U && !fetcher_redirect_pending &&
+                    cachesReady)
                 {
                     when (!predictor.io.stall) {
                         predictor.io.queryValid := true.B

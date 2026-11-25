@@ -7,270 +7,383 @@
 //> using options -Xfatal-warnings -Ywarn-unused
 
 package Cache
-import cpu2026._
+
 import Config._
 import Config.CPUConfig._
-
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.{ExtModule, IntParam}
-import Config.CPUConfig.setBIT
+import cpu2026._
 
-class Cache(val offsetBIT: Int) extends Module{//issueWidth Icache, 1 Dcache
-//Icache offset=4bit, Dache offset=2bit, tagBIT=32-setBIT-offsetBIT
-    val io=IO(new Bundle{
-        val load_valid = Input(Bool())//load
-        val need_load = Input(Bool())//if cache miss when loading, whether need to wait for the new value from the memory
-        val store_valid = Input(Bool())//store
-        // 地址右移 offsetBIT 后的 Cache 字地址，仅保留 tag 与 set 所需位。
-        val addr  = Input(UInt((32-offsetBIT).W))
-        val wdata = Input(UInt(32.W))
-        val wmask = Input(UInt(4.W))
+/** Tag SRAM 中条目元数据的编码方式。
+  *
+  * 最低位固定为 valid；D-Cache 的下一位为 dirty。高比特保存 tag。
+  * I-Cache 不生成 dirty 位，避免为只读存储结构保留无用状态。
+  */
+object CacheEntry {
+  def metaWidth(hasDirty: Boolean): Int = if (hasDirty) 2 else 1
 
-        val new_valid = Input(Bool())
-        val new_data = Input(UInt(32.W))//the data of the new wanted addr
-        val clear_status = Input(Bool()) //no longer needs new data
+  def width(tagBits: Int, hasDirty: Boolean): Int =
+    tagBits + metaWidth(hasDirty)
 
-        val store_received = Input(Bool())
+  def pack(
+    tagValue: UInt,
+    valid: Bool,
+    dirty: Bool,
+    hasDirty: Boolean
+  ): UInt = {
+    val metadata = if (hasDirty) Cat(dirty, valid) else valid.asUInt
+    Cat(tagValue, metadata)
+  }
 
-        val out_hit = Output(Bool())//whether cache hit or not
-        val out_rdata = Output(UInt(32.W))
-        
-        val out_wvalid = Output(Bool())
-        val out_waddr = Output(UInt(32.W))//the discarded addr
-        val out_wdata = Output(UInt(32.W))//the discarded data
+  def tag(entry: UInt, tagBits: Int, hasDirty: Boolean): UInt = {
+    val metadataBits = metaWidth(hasDirty)
+    entry(tagBits + metadataBits - 1, metadataBits)
+  }
 
-    })
-    io.out_hit := false.B
-    io.out_rdata := 0.U
-    io.out_wvalid := false.B
-    io.out_waddr := 0.U
-    io.out_wdata := 0.U
-    // Metadata is organized by way and then set, matching the cache lookup.
-    val valid = RegInit(
-        VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(false.B))))
-    )
-    val dirty = RegInit(
-        VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(false.B))))
-    )
-    val age = RegInit(
-        VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(0.U(2.W)))))
-    )//age=0,1,2,3
+  def valid(entry: UInt): Bool = entry(0)
 
-    val tagBIT=32-setBIT-offsetBIT
-    val needTag = Reg(UInt(tagBIT.W))
-    val lstLoad = RegInit(false.B)
-    val lstStore = RegInit(false.B)
-    // Preserve the full store payload while a cache request is outstanding.
-    val lstData = RegInit(0.U(32.W))
-    val lstMask = RegInit(0.U(4.W))
-    val lstIdx = Reg(UInt(setBIT.W))
-    val waiting = RegInit(0.U(2.W))//0: initial state, 1 waiting for new val loaded from memory, 2 waiting for the discarded dirty value to be store into memory
-    val writeback_valid = RegInit(false.B)
-    val tags = Reg(Vec(lineNum,UInt(tagBIT.W)))
-    val datas = Reg(Vec(lineNum,UInt(32.W)))
+  def dirty(entry: UInt, hasDirty: Boolean): Bool =
+    if (hasDirty) entry(1) else false.B
+}
 
-    val pre_waddr = Reg(UInt(32.W))
-    val pre_wdata = Reg(UInt(32.W))
-    // Register the writeback request so the parent's acknowledge cannot form
-    // a combinational path back into this output.
-    io.out_wvalid := writeback_valid
-    io.out_waddr := pre_waddr
-    io.out_wdata := pre_wdata
+/** 四路组相联 Cache。
+  *
+  * I-Cache 与 D-Cache 共用查询和替换流程。`hasDirty=false` 的实例不包含
+  * dirty 位、脏块写回寄存器和 store 更新逻辑；因此指令 Cache 的 tag 条目
+  * 只保存 `{valid, tag}`。
+  *
+  * SRAM 没有复位能力，所以 valid 必须在上电后显式清零。清零期间
+  * `out_ready=false`，父模块必须推迟请求。正常查询仍在请求后的下一拍返回，
+  * 不因 valid/dirty 移入 SRAM 而增加额外延迟。
+  */
+class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
+  val io = IO(new Bundle {
+    val load_valid = Input(Bool())
+    val need_load = Input(Bool())
+    val store_valid = Input(Bool())
+    // 地址右移 offsetBIT 后的 Cache 字地址，仅保留 tag 与 set 所需位。
+    val addr = Input(UInt((32 - offsetBIT).W))
+    val wdata = Input(UInt(32.W))
+    val wmask = Input(UInt(4.W))
 
-    val tagRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, tagBIT, tagBIT)))
-    val dataRams = Seq.fill(lineNum)(Module(new SRAM(setSIZE, 32, 8)))
-    for (i<-0 until lineNum){
-        tagRams(i).clk:=clock
-        dataRams(i).clk:=clock
-        tagRams(i).en:=false.B
-        dataRams(i).en:=false.B
+    val new_valid = Input(Bool())
+    val new_data = Input(UInt(32.W))
+    val clear_status = Input(Bool())
+    val store_received = Input(Bool())
+
+    val out_ready = Output(Bool())
+    val out_hit = Output(Bool())
+    val out_rdata = Output(UInt(32.W))
+
+    val out_wvalid = Output(Bool())
+    val out_waddr = Output(UInt(32.W))
+    val out_wdata = Output(UInt(32.W))
+  })
+
+  val tagBits = 32 - setBIT - offsetBIT
+  val entryBits = CacheEntry.width(tagBits, hasDirty)
+
+  def packEntry(tagValue: UInt, valid: Bool, dirty: Bool): UInt =
+    CacheEntry.pack(tagValue, valid, dirty, hasDirty)
+
+  def entryTag(entry: UInt): UInt =
+    CacheEntry.tag(entry, tagBits, hasDirty)
+
+  def entryValid(entry: UInt): Bool = CacheEntry.valid(entry)
+
+  def entryDirty(entry: UInt): Bool =
+    CacheEntry.dirty(entry, hasDirty)
+
+  io.out_hit := false.B
+  io.out_rdata := 0.U
+  io.out_wvalid := false.B
+  io.out_waddr := 0.U
+  io.out_wdata := 0.U
+
+  // age 是每次 hit 都会更新的热状态；继续使用寄存器可避免同步 SRAM
+  // 单端口在读旧 age 和写新 age 之间产生读写冲突。
+  val age = RegInit(
+    VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(0.U(2.W)))))
+  )
+
+  val needTag = Reg(UInt(tagBits.W))
+  val lstLoad = RegInit(false.B)
+  val lstStore = RegInit(false.B)
+  // 保存未完成请求的 store 数据，避免父模块改变输入后丢失写内容。
+  val lstData = RegInit(0.U(32.W))
+  val lstMask = RegInit(0.U(4.W))
+  val lstIdx = Reg(UInt(setBIT.W))
+  // 0: 空闲；1: 等待内存回填；2: 等待 D-Cache 脏块写回。
+  val waiting = RegInit(0.U(2.W))
+
+  // 查询结果中的 tag/data 与 valid/dirty 快照。
+  //
+  // SRAM 在 en=0 或写周期时 rdata 不保证有效，因此回填可能发生在若干拍
+  // 以后时不能再次直接使用 rdata。快照只保存最近一次查询的四路结果，
+  // 不保存整张元数据表。
+  val tags = Reg(Vec(lineNum, UInt(tagBits.W)))
+  val datas = Reg(Vec(lineNum, UInt(32.W)))
+  val validSnapshots =
+    RegInit(VecInit(Seq.fill(lineNum)(false.B)))
+  val dirtySnapshots =
+    if (hasDirty) {
+      Some(RegInit(VecInit(Seq.fill(lineNum)(false.B))))
+    } else {
+      None
+    }
+
+  def dirtySnapshot(way: Int): Bool =
+    dirtySnapshots.map(_(way)).getOrElse(false.B)
+
+  val writebackValid =
+    if (hasDirty) Some(RegInit(false.B)) else None
+  val preWaddr =
+    if (hasDirty) Some(Reg(UInt(32.W))) else None
+  val preWdata =
+    if (hasDirty) Some(Reg(UInt(32.W))) else None
+
+  io.out_wvalid := writebackValid.getOrElse(false.B)
+  io.out_waddr := preWaddr.getOrElse(0.U(32.W))
+  io.out_wdata := preWdata.getOrElse(0.U(32.W))
+
+  val tagRams = Seq.fill(lineNum)(
+    Module(new SRAM(setSIZE, entryBits, entryBits))
+  )
+  val dataRams = Seq.fill(lineNum)(
+    Module(new SRAM(setSIZE, 32, 8))
+  )
+
+  for (i <- 0 until lineNum) {
+    tagRams(i).clk := clock
+    dataRams(i).clk := clock
+    tagRams(i).en := false.B
+    dataRams(i).en := false.B
+    tagRams(i).we := false.B
+    tagRams(i).wmask := 0.U
+    tagRams(i).addr := 0.U
+    tagRams(i).wdata := 0.U
+    dataRams(i).we := false.B
+    dataRams(i).wmask := 0.U
+    dataRams(i).addr := 0.U
+    dataRams(i).wdata := 0.U
+  }
+
+  val tag = Wire(UInt(tagBits.W))
+  val set_idx = Wire(UInt(setBIT.W))
+  val missed = Wire(Bool())
+  val flag = Wire(UInt(3.W))
+  val write_data = Wire(Bool())
+  val data = Wire(UInt(32.W))
+  val isdirty = Wire(Bool())
+
+  write_data := false.B
+  missed := false.B
+  flag := 0.U
+  data := 0.U
+  isdirty := false.B
+  set_idx := io.addr(setBIT - 1, 0)
+  tag := io.addr(31 - offsetBIT, setBIT)
+
+  // SRAM 不提供复位值。四个 way 并行清零，共 setSIZE 拍。
+  val initDone = RegInit(false.B)
+  val initIndex = RegInit(0.U(setBIT.W))
+  io.out_ready := initDone
+
+  when (!initDone) {
+    for (i <- 0 until lineNum) {
+      tagRams(i).en := true.B
+      tagRams(i).we := true.B
+      tagRams(i).addr := initIndex
+      tagRams(i).wdata := 0.U
+      tagRams(i).wmask := 1.U
+    }
+    when (initIndex === (setSIZE - 1).U) {
+      initDone := true.B
+    }.otherwise {
+      initIndex := initIndex + 1.U
+    }
+  }.otherwise {
+    // 请求到达时同时读取 tag 和 data。valid/dirty 与 tag 位于同一个
+    // SRAM word，因此下一拍即可完成完整命中判断，不需要额外查询元数据。
+    when (waiting === 0.U && (io.load_valid || io.store_valid)) {
+      for (i <- 0 until lineNum) {
+        tagRams(i).en := true.B
         tagRams(i).we := false.B
-        tagRams(i).wmask := 0.U
-        tagRams(i).addr := 0.U
-        tagRams(i).wdata := 0.U
+        tagRams(i).addr := set_idx
+        dataRams(i).en := true.B
         dataRams(i).we := false.B
-        dataRams(i).wmask := 0.U
-        dataRams(i).addr := 0.U
-        dataRams(i).wdata := 0.U
-    }
-    val tag = Wire(UInt(tagBIT.W))
-    val set_idx = Wire(UInt(setBIT.W))
-    val missed = Wire(Bool())
-    val flag=Wire(UInt(3.W))
-    val write_data = Wire(Bool())
-    val data = Wire(UInt(32.W))
-    val isdirty = Wire(Bool())
-
-    write_data:=false.B
-    missed:=false.B
-    flag:=0.U
-    data:=0.U
-    isdirty:=false.B
-    set_idx := io.addr(setBIT-1,0)
-    tag := io.addr(31-offsetBIT,setBIT)
-
-    // SRAM 读有一拍延迟：接收新请求时立即启动读，下一拍再用 rdata
-    // 比较 tag。父模块也恰好在请求后的下一拍采样 out_hit/out_rdata。
-    when (waiting===0.U && (io.load_valid || io.store_valid)) {
-        for (i<-0 until lineNum){
-            tagRams(i).en:=true.B
-            tagRams(i).we:=false.B
-            tagRams(i).addr:=set_idx
-            dataRams(i).en:=true.B
-            dataRams(i).we:=false.B
-            dataRams(i).addr:=set_idx
-        }
+        dataRams(i).addr := set_idx
+      }
     }
 
-    when (waiting===0.U||(waiting===1.U&&io.clear_status===true.B))
-    {
-        waiting:=0.U
-        needTag := tag
-        lstLoad := io.load_valid
-        lstStore := io.store_valid
-        lstData := io.wdata
-        lstMask := io.wmask
-        lstIdx := set_idx
-        when ((lstLoad|lstStore)===true.B)
-        {
-            flag:=0.U//0 for invalid
-            missed:=true.B
-                    val threshold_age = WireDefault(0.U(2.W))
-            for (i<-0 until lineNum){
-                when (valid(i)(lstIdx) && tagRams(i).rdata === needTag){//cache hit, need to update age
-                    io.out_hit:=true.B
-                    flag:=(i+1).U
-                    missed:=false.B
-                    io.out_rdata:=dataRams(i).rdata
-                    threshold_age:=age(i)(lstIdx)
-                    age(i)(lstIdx):=0.U
-                }
-                tags(i):=tagRams(i).rdata
-                datas(i):=dataRams(i).rdata
-            }
-            when (missed===false.B){//update age
-                for (i<-0 until lineNum)
-                {
-                    when (valid(i)(lstIdx) && age(i)(lstIdx)<threshold_age)
-                    {
-                       age(i)(lstIdx):=age(i)(lstIdx)+1.U
-                    }
-                }
-            }
+    val lookupValid = Wire(Vec(lineNum, Bool()))
+    lookupValid := 0.U.asTypeOf(lookupValid)
+
+    when (
+      waiting === 0.U ||
+        (waiting === 1.U && io.clear_status === true.B)
+    ) {
+      waiting := 0.U
+      needTag := tag
+      lstLoad := io.load_valid
+      lstStore := io.store_valid
+      lstData := io.wdata
+      lstMask := io.wmask
+      lstIdx := set_idx
+      when ((lstLoad | lstStore) === true.B) {
+        flag := 0.U
+        missed := true.B
+        val thresholdAge = WireDefault(0.U(2.W))
+        for (i <- 0 until lineNum) {
+          val entry = tagRams(i).rdata
+          lookupValid(i) := entryValid(entry)
+          when (lookupValid(i) && entryTag(entry) === needTag) {
+            io.out_hit := true.B
+            flag := (i + 1).U
+            missed := false.B
+            io.out_rdata := dataRams(i).rdata
+            thresholdAge := age(i)(lstIdx)
+            age(i)(lstIdx) := 0.U
+          }
+          tags(i) := entryTag(entry)
+          validSnapshots(i) := entryValid(entry)
+          dirtySnapshots.foreach(_(i) := entryDirty(entry))
+          datas(i) := dataRams(i).rdata
         }
-        when (missed===false.B)//hit
-        {
-            when (lstStore===true.B)//write
-            {
-                for (i<-0 until lineNum)
-                {
-                    when ((i+1).U===flag)
-                    {
-                        dataRams(i).clk:=clock
-                        dataRams(i).en:=true.B
-                        dataRams(i).we:=true.B//write
-                        dataRams(i).addr:=lstIdx
-                        dataRams(i).wdata:=lstData
-                        dataRams(i).wmask:=lstMask
-                        dirty(i)(lstIdx):=true.B
-                    }
-                }
-            }.elsewhen ((io.load_valid|io.store_valid)===true.B)
-            {
-                for (i<-0 until lineNum){
-                    tagRams(i).clk:=clock
-                    tagRams(i).en:=true.B
-                    tagRams(i).we:=false.B
-                    tagRams(i).addr:=set_idx
-                    dataRams(i).clk:=clock
-                    dataRams(i).en:=true.B
-                    dataRams(i).we:=false.B
-                    dataRams(i).addr:=set_idx
-                }
+        when (missed === false.B) {
+          for (i <- 0 until lineNum) {
+            when (
+              lookupValid(i) &&
+                age(i)(lstIdx) < thresholdAge
+            ) {
+              age(i)(lstIdx) := age(i)(lstIdx) + 1.U
             }
-        }.otherwise
-        {
-            when (lstStore===true.B)
-            {
-                write_data:=true.B
-                data:=lstData
-                lstLoad:=false.B
-                lstStore:=false.B
-                isdirty:=true.B //dirty val
-            }.otherwise
-            {
-                waiting:=1.U
+          }
+        }
+
+        when (missed === false.B) {
+          when (hasDirty.B && lstStore === true.B) {
+            for (i <- 0 until lineNum) {
+              when ((i + 1).U === flag) {
+                dataRams(i).en := true.B
+                dataRams(i).we := true.B
+                dataRams(i).addr := lstIdx
+                dataRams(i).wdata := lstData
+                dataRams(i).wmask := lstMask
+
+                if (hasDirty) {
+                  // 当前查询已读出完整 tag word，可以直接整字改写 dirty，
+                  // 不需要额外的 SRAM 读或额外流水级。
+                  tagRams(i).en := true.B
+                  tagRams(i).we := true.B
+                  tagRams(i).addr := lstIdx
+                  tagRams(i).wdata :=
+                    packEntry(entryTag(tagRams(i).rdata), true.B, true.B)
+                  tagRams(i).wmask := 1.U
+                  dirtySnapshots.foreach(_(i) := true.B)
+                }
+              }
             }
+          }.elsewhen ((io.load_valid | io.store_valid) === true.B) {
+            for (i <- 0 until lineNum) {
+              tagRams(i).en := true.B
+              tagRams(i).we := false.B
+              tagRams(i).addr := set_idx
+              dataRams(i).en := true.B
+              dataRams(i).we := false.B
+              dataRams(i).addr := set_idx
+            }
+          }
+        }.otherwise {
+          when (lstStore === true.B) {
+            write_data := true.B
+            data := lstData
+            lstLoad := false.B
+            lstStore := false.B
+            isdirty := hasDirty.B
+          }.otherwise {
+            waiting := 1.U
+          }
         }
-    }.elsewhen (waiting===1.U){
-        when (io.new_valid===true.B){//cache not hit when loading, wait for new val
-            write_data:=true.B
-            data:=io.new_data
-            waiting:=0.U
-            lstLoad:=false.B
-            lstStore:=false.B
-            isdirty:=false.B//new val loaded from memory, not dirty
+      }
+
+    }.elsewhen (waiting === 1.U) {
+      when (io.new_valid === true.B) {
+        write_data := true.B
+        data := io.new_data
+        waiting := 0.U
+        lstLoad := false.B
+        lstStore := false.B
+        isdirty := false.B
+      }
+    }.otherwise {
+      if (hasDirty) {
+        when (io.store_received === true.B) {
+          waiting := 0.U
+          writebackValid.foreach(_ := false.B)
         }
-    }.otherwise{
-        when (io.store_received===true.B){
-            waiting:=0.U
-            writeback_valid:=false.B
-        }
+      }
     }
-    when (write_data===true.B)
-    {
-        val wayValid = Wire(Vec(lineNum, Bool()))
-        val wayAge = Wire(Vec(lineNum, UInt(2.W)))
-        for (i<-0 until lineNum){
-            wayValid(i):=valid(i)(lstIdx)
-            wayAge(i):=age(i)(lstIdx)
-        }
-        val chosen = CacheReplacement.selectVictim(wayValid, wayAge)
 
-        for (i<-0 until lineNum)//write new val
-        {
-            when (i.U===chosen)
-            {
-                when (dirty(i)(lstIdx)===true.B){
-                    writeback_valid:=true.B
-                    when (missed===true.B)//missed in the current cycle
-                    {
-                        pre_waddr:=(Cat(tagRams(i).rdata,lstIdx)<<offsetBIT.U)
-                        pre_wdata:=dataRams(i).rdata
-                    }.otherwise{
-                        pre_waddr:=(Cat(tags(i),lstIdx)<<offsetBIT.U)
-                        pre_wdata:=datas(i)
-                    }
-                    waiting:=2.U
-                }
+    // 回填可能发生在 load miss 的若干拍之后。store miss 当拍回填时 rdata
+    // 仍有效，load miss 延迟回填时则使用查询拍保存的快照。
+    when (write_data === true.B) {
+      val wayValid = Wire(Vec(lineNum, Bool()))
+      val wayAge = Wire(Vec(lineNum, UInt(2.W)))
+      val victimTag = Wire(Vec(lineNum, UInt(tagBits.W)))
+      val victimData = Wire(Vec(lineNum, UInt(32.W)))
+      val victimDirty = Wire(Vec(lineNum, Bool()))
 
-                tagRams(i).clk:=clock
-                tagRams(i).en:=true.B
-                tagRams(i).we:=true.B
-                tagRams(i).addr:=lstIdx
-                tagRams(i).wdata:=needTag
-                tagRams(i).wmask:=1.U
+      for (i <- 0 until lineNum) {
+        wayValid(i) :=
+          Mux(missed, entryValid(tagRams(i).rdata), validSnapshots(i))
+        wayAge(i) := age(i)(lstIdx)
+        victimTag(i) :=
+          Mux(missed, entryTag(tagRams(i).rdata), tags(i))
+        victimData(i) :=
+          Mux(missed, dataRams(i).rdata, datas(i))
+        victimDirty(i) :=
+          Mux(missed, entryDirty(tagRams(i).rdata), dirtySnapshot(i))
+      }
 
-                dataRams(i).clk:=clock
-                dataRams(i).en:=true.B
-                dataRams(i).we:=true.B
-                dataRams(i).addr:=lstIdx
-                dataRams(i).wdata:=data
-                dataRams(i).wmask:=lstMask
+      val chosen = CacheReplacement.selectVictim(wayValid, wayAge)
 
-                valid(i)(lstIdx):=true.B
-                dirty(i)(lstIdx):=isdirty
-                age(i)(lstIdx):=0.U
-            }.otherwise{
-                when (valid(i)(lstIdx)===true.B){
-                    age(i)(lstIdx):=Mux(
-                        age(i)(lstIdx)===(lineNum-1).U,
-                        age(i)(lstIdx),
-                        age(i)(lstIdx)+1.U
-                    )
-                }
+      for (i <- 0 until lineNum) {
+        when (i.U === chosen) {
+          if (hasDirty) {
+            when (victimDirty(i) === true.B) {
+              writebackValid.foreach(_ := true.B)
+              preWaddr.foreach(
+                _ := (Cat(victimTag(i), lstIdx) << offsetBIT.U)
+              )
+              preWdata.foreach(_ := victimData(i))
+              waiting := 2.U
             }
+          }
+
+          tagRams(i).en := true.B
+          tagRams(i).we := true.B
+          tagRams(i).addr := lstIdx
+          tagRams(i).wdata := packEntry(needTag, true.B, isdirty)
+          tagRams(i).wmask := 1.U
+
+          dataRams(i).en := true.B
+          dataRams(i).we := true.B
+          dataRams(i).addr := lstIdx
+          dataRams(i).wdata := data
+          dataRams(i).wmask := lstMask
+
+          age(i)(lstIdx) := 0.U
+        }.otherwise {
+          when (wayValid(i) === true.B) {
+            age(i)(lstIdx) := Mux(
+              age(i)(lstIdx) === (lineNum - 1).U,
+              age(i)(lstIdx),
+              age(i)(lstIdx) + 1.U
+            )
+          }
         }
+      }
     }
+  }
 }
