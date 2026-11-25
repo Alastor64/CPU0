@@ -125,9 +125,19 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
 
   // age 是每次 hit 都会更新的热状态；继续使用寄存器可避免同步 SRAM
   // 单端口在读旧 age 和写新 age 之间产生读写冲突。
+  //
+  // 每个 set 的四路 age 打包成一个字。这样按 set 索引时 Verilator 只需为
+  // 一个 8 位寄存器生成选择逻辑，而不是分别展开四组 2 位选择。
+  val ageBits = 2
+  val ageWordWidth = lineNum * ageBits
   val age = RegInit(
-    VecInit(Seq.fill(lineNum)(VecInit(Seq.fill(setSIZE)(0.U(2.W)))))
+    VecInit(Seq.fill(setSIZE)(0.U(ageWordWidth.W)))
   )
+
+  def ageAt(word: UInt, way: Int): UInt =
+    word((way + 1) * ageBits - 1, way * ageBits)
+
+  def packAges(ages: Seq[UInt]): UInt = Cat(ages.reverse)
 
   val needTag = Reg(UInt(tagBits.W))
   val lstLoad = RegInit(false.B)
@@ -262,6 +272,8 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
       lstData := io.wdata
       lstMask := io.wmask
       lstIdx := set_idx
+      val queryAgeWord = Wire(UInt(ageWordWidth.W))
+      queryAgeWord := age(lstIdx)
       when ((lstLoad | lstStore) === true.B) {
         flag := 0.U
         missed := true.B
@@ -274,8 +286,7 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
             flag := (i + 1).U
             missed := false.B
             io.out_rdata := dataRams(i).rdata
-            thresholdAge := age(i)(lstIdx)
-            age(i)(lstIdx) := 0.U
+            thresholdAge := ageAt(queryAgeWord, i)
           }
           tags(i) := entryTag(entry)
           validSnapshots(i) := entryValid(entry)
@@ -283,14 +294,20 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
           datas(i) := dataRams(i).rdata
         }
         when (missed === false.B) {
+          val updatedAges = Wire(Vec(lineNum, UInt(ageBits.W)))
           for (i <- 0 until lineNum) {
-            when (
-              lookupValid(i) &&
-                age(i)(lstIdx) < thresholdAge
+            val oldAge = ageAt(queryAgeWord, i)
+            when (flag === (i + 1).U) {
+              updatedAges(i) := 0.U
+            }.elsewhen (
+              lookupValid(i) && oldAge < thresholdAge
             ) {
-              age(i)(lstIdx) := age(i)(lstIdx) + 1.U
+              updatedAges(i) := oldAge + 1.U
+            }.otherwise {
+              updatedAges(i) := oldAge
             }
           }
+          age(lstIdx) := packAges(updatedAges)
         }
 
         when (missed === false.B) {
@@ -423,10 +440,13 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
           lstIdx
         }
 
+      val fillAgeWord = Wire(UInt(ageWordWidth.W))
+      fillAgeWord := age(fillIdxOnThisCycle)
+
       for (i <- 0 until lineNum) {
         wayValid(i) :=
           Mux(missed, entryValid(tagRams(i).rdata), validSnapshots(i))
-        wayAge(i) := age(i)(fillIdxOnThisCycle)
+        wayAge(i) := ageAt(fillAgeWord, i)
         victimTag(i) :=
           Mux(missed, entryTag(tagRams(i).rdata), tags(i))
         victimData(i) :=
@@ -436,6 +456,7 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
       }
 
       val chosen = CacheReplacement.selectVictim(wayValid, wayAge)
+      val updatedAges = Wire(Vec(lineNum, UInt(ageBits.W)))
 
       for (i <- 0 until lineNum) {
         when (i.U === chosen) {
@@ -469,17 +490,21 @@ class Cache(val offsetBIT: Int, val hasDirty: Boolean) extends Module {
             dataRams(i).wmask := lstMask
           }
 
-          age(i)(fillIdxOnThisCycle) := 0.U
+          updatedAges(i) := 0.U
         }.otherwise {
+          val oldAge = ageAt(fillAgeWord, i)
           when (wayValid(i) === true.B) {
-            age(i)(fillIdxOnThisCycle) := Mux(
-              age(i)(fillIdxOnThisCycle) === (lineNum - 1).U,
-              age(i)(fillIdxOnThisCycle),
-              age(i)(fillIdxOnThisCycle) + 1.U
+            updatedAges(i) := Mux(
+              oldAge === (lineNum - 1).U,
+              oldAge,
+              oldAge + 1.U
             )
+          }.otherwise {
+            updatedAges(i) := oldAge
           }
         }
       }
+      age(fillIdxOnThisCycle) := packAges(updatedAges)
     }
   }
 }
