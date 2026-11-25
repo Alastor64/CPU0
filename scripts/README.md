@@ -18,6 +18,7 @@
 | `sbt.sh` | 在 WSL 中启动 Linux 版 sbt，并把参数原样转发 |
 | `gen.sh` | 运行 Chisel 导出主类，生成 SystemVerilog |
 | `sim.sh` | 用 Verilator 编译设计、测试台并运行仿真 |
+| `test-correctness.sh` | 生成或复用 CPU 仿真器并运行 correctness 用例 |
 | `synth.sh` | 用 Yosys 估算面积，用 OpenSTA 估算时序 |
 | `publish.sh` | 把生成的 CPU RTL 同步到 `CPU-submit`，可选提交和推送 |
 
@@ -124,6 +125,53 @@ Verilator 启用 `--timing` 与 `-Wall -Wno-fatal`，因此会报告警告但不
 避免 Windows 盘的时间戳精度导致运行旧仿真器。
 
 运行入口是 `<输出目录>/sim`。
+
+## 正确性回归
+
+### `test-correctness.sh`
+
+```sh
+scripts/test-correctness.sh
+scripts/test-correctness.sh --case correctness_hanoi
+scripts/test-correctness.sh --directed path/to/testcases
+scripts/test-correctness.sh --rebuild
+```
+
+脚本默认运行课程框架中的全部 `correctness_*` 用例，但跳过耗时较长的
+`correctness_qsort` 和 `correctness_pi`。需要运行这两个用例时，要么显式指定
+`--case`，要么在完整回归中增加 `--include-slow`。
+
+参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--case <名称>` | 只运行指定用例；不受默认慢测试过滤影响 |
+| `--directed <目录>` | 额外运行指定目录中的定向用例 |
+| `--include-slow` | 完整回归时包含 qsort 和 pi |
+| `--rebuild` | 强制重新生成 RTL 并编译仿真器 |
+| `--max-cycles <数量>` | 覆盖单个用例的周期上限 |
+| `--latency <数值>` | 覆盖测试台的响应延迟参数 |
+| `-h`, `--help` | 打印用法 |
+
+可调环境变量：
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `RISC_V_CPU_2026_DIR` | `../RISC-V-CPU-2026` | 课程框架目录 |
+| `SIM` | `v0/build/correctness-sim/sim` | 已构建仿真器路径 |
+| `MAX_CYCLES` | `12000000` | 用例周期上限 |
+| `LATENCY` | `10` | 测试台响应延迟参数 |
+| `JOBS` | `4` | 重新编译仿真器时的并行任务数 |
+
+当 `--rebuild` 生效或默认仿真器不存在时，脚本会：
+
+1. 生成 RTL 到 `v0/build/generated-correctness/`
+2. 写入只包含 `student_top.sv` 的临时 filelist
+3. 调用课程框架的 `make build`
+4. 把仿真器编译到 `v0/build/correctness-sim/sim`
+
+按此流程重新构建时，需要先运行 `source scripts/env.sh`，或者在课程框架中
+配置可用的 Verilator。脚本只复用已有 `SIM` 时不需要重新构建。
 
 ## 综合与时序
 
@@ -232,6 +280,7 @@ source scripts/env.sh
 scripts/gen.sh learn learn.Generate learn/build/generated
 scripts/sim.sh tb_counter learn/build/sim_counter \
     learn/build/generated/counter_w8.sv learn/tb/tb_counter.sv
+scripts/test-correctness.sh --case correctness_add_to_100
 scripts/synth.sh counter_w8 learn/build/synth_counter \
     learn/build/generated/counter_w8.sv
 
