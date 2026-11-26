@@ -22,9 +22,9 @@ object MemoryLane {
   def alignStoreData(data: UInt, addr: UInt): UInt = {
     val aligned = VecInit(Seq(
       data,
-      Cat(0.U(8.W), data(23, 0)),
-      Cat(0.U(16.W), data(15, 0)),
-      Cat(0.U(24.W), data(7, 0))
+      Cat(data(23, 0), 0.U(8.W)),
+      Cat(data(15, 0), 0.U(16.W)),
+      Cat(data(7, 0), 0.U(24.W))
     ))
     aligned(byteOffset(addr))
   }
@@ -33,9 +33,9 @@ object MemoryLane {
   def alignStoreMask(mask: UInt, addr: UInt): UInt = {
     val aligned = VecInit(Seq(
       mask,
-      Cat(0.U(1.W), mask(2, 0)),
-      Cat(0.U(2.W), mask(1, 0)),
-      Cat(0.U(3.W), mask(0))
+      Cat(mask(2, 0), 0.U(1.W)),
+      Cat(mask(1, 0), 0.U(2.W)),
+      Cat(mask(0), 0.U(3.W))
     ))
     aligned(byteOffset(addr))
   }
