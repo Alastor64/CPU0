@@ -251,10 +251,14 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
     // redirect/flush 只能在确认没有未完成读事务时直接清零；否则必须先排空
     // 旧请求，避免把旧地址的 rdata 配给重定向后的新 PC。
     val fetcher_waiting = RegInit(0.U(2.W))
-    // SRAM 中的 valid 需要显式清零。清零完成前不能发起 I-Cache 查询，
-    // 否则内存回填可能被初始化写操作覆盖。
+    // SRAM 中的 valid 需要显式清零。各 Cache 并行完成清零，CPU 在这里
+    // 汇总 ready，并把“启动”与“正常执行”划分成两个明确阶段。
     val cachesReady =
         Icache.map(_.io.out_ready).reduce(_ && _) && Dcache.io.out_ready
+    val bootDone = RegInit(false.B)
+    when (cachesReady) {
+        bootDone := true.B
+    }
     // redirect 到达时若仍有 AXI 读事务，先记住目标，事务排空后再更新 PC。
     val fetcher_redirect_pending = RegInit(false.B)
     val fetcher_redirect_pc = Reg(UInt(32.W))
@@ -305,7 +309,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
     // Capture only after the store reaches the commit point, so a store on a
     // mispredicted path can never terminate the program.
-    when (exit_store_commit && exit_store_pending===false.B){
+    when (bootDone && exit_store_commit && exit_store_pending===false.B){
         exit_store_pending:=true.B
         exit_store_addr:=committer.io.out_store_addr
         exit_store_data:=committer.io.out_store_value
@@ -316,7 +320,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
     // D-cache write back is kept outside the normal execution branch so an
     // already-pending dirty line can still drain after the CPU enters exit mode.
-    when (halt===false.B||exit_store_pending===true.B){
+    when (bootDone && (halt===false.B||exit_store_pending===true.B)){
         //Dcache write back  
         when (Dcache_waiting===0.U)
         {
@@ -351,7 +355,11 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
         }
     }
 
-    when (exit_store_pending===true.B){
+    when (!bootDone) {
+        // Cache 仍在初始化。所有模块输入保持上方定义的默认无效值，
+        // 不取指、不访存，也不进入 flush 或 halt 路径。
+        decoder.io.in_valid := false.B
+    }.elsewhen (exit_store_pending===true.B){
         // The normal pipeline is stopped, but old read responses still need to
         // be consumed. The Committer also needs to see this uncached store as
         // complete instead of waiting forever for a D-cache acknowledgement.
@@ -470,7 +478,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 fetcher_redirect_pending:=false.B
                 new_pc_val:=fetcher_redirect_pc
                 decoder.io.in_valid:=false.B
-            }.elsewhen(fetcher_waiting===0.U && cachesReady)
+            }.elsewhen(fetcher_waiting===0.U)
             {
                 // PC[3:2] 决定四个逻辑指令槽在 Icache 实例上的循环起点。
                 // 例如起点为 3 时，槽位依次访问 Icache 3、0、1、2。
@@ -494,7 +502,6 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
                 // 首字 miss 时从内存取一条指令。Fetcher 与 LSU/Dcache
                 // 共享 AXI 读通道，因此必须先确认其他读事务和写回路径空闲。
                 when (fetchControl.io.validNum===0.U && !fetcher_redirect &&
-                    cachesReady &&
                     Dcache_waiting===false.B &&
                     Dcache.io.out_wvalid===false.B && lsu_waiting===0.U &&
                     lsu.lsuIO.out_valid===false.B &&
@@ -651,8 +658,7 @@ class CPU extends Module{//priority: ready instruction< read data < write data <
 
                 // 状态 0 时提前为 new_pc_val 连续四个字发起 Icache 查询。
                 // 下一拍状态 0 使用这些查询结果计算前缀命中数。
-                when (fetcher_next===0.U && !fetcher_redirect_pending &&
-                    cachesReady)
+                when (fetcher_next===0.U && !fetcher_redirect_pending)
                 {
                     when (!predictor.io.stall) {
                         predictor.io.queryValid := true.B
