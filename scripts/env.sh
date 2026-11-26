@@ -10,6 +10,7 @@
 #
 #   CPU2026_APPDIR      解包后的工具链根目录（AppImage 的解包产物）
 #   CPU2026_ASAP7_LIB   ASAP7 标准单元库目录（正好 5 个 .lib）
+#   CPU2026_MAKE        GNU Make 4.4.x 可执行文件
 #   SBT_LAUNCH          sbt 启动器 jar（WSL 里没有独立 sbt，用它启动）
 
 # 本文件是被 source 的，$0 指向调用者，因此用 BASH_SOURCE 定位自己的位置
@@ -19,6 +20,7 @@ unset _my_scripts_dir
 
 export CPU2026_APPDIR="$MY_ROOT/tools/cpu2026"
 export CPU2026_ASAP7_LIB="$CPU2026_APPDIR/asap7/lib"
+export CPU2026_MAKE="${CPU2026_MAKE:-"$MY_ROOT/../tools/make-4.4.1-install/bin/make"}"
 export SBT_LAUNCH="$MY_ROOT/tools/sbt-launch.jar"
 
 # PATH 里避免重复追加（重复 source 时）
@@ -32,3 +34,28 @@ if [ ! -x "$CPU2026_APPDIR/bin/verilator" ]; then
   echo "env.sh: 请先执行 scripts/setup-tools.sh 解包 AppImage" >&2
   return 1 2>/dev/null || exit 1
 fi
+
+# GNU Make 4.4 的 FIFO jobserver 与 OJ 一致。除直接调用 make 外，还必须导出
+# MAKE，供 Verilator 启动它生成的 Makefile 时使用。
+if [ ! -x "$CPU2026_MAKE" ]; then
+  echo "env.sh: 找不到 GNU Make 4.4.x：$CPU2026_MAKE" >&2
+  echo "env.sh: 请安装到该位置，或用 CPU2026_MAKE 指定可执行文件" >&2
+  return 1 2>/dev/null || exit 1
+fi
+
+_my_make_version=$("$CPU2026_MAKE" --version | sed -n '1s/^GNU Make //p')
+case "$_my_make_version" in
+  4.4|4.4.*) ;;
+  *)
+    echo "env.sh: 要求 GNU Make 4.4.x，实际为 ${_my_make_version:-unknown}" >&2
+    return 1 2>/dev/null || exit 1
+    ;;
+esac
+
+export MAKE="$CPU2026_MAKE"
+_my_make_dir=$(dirname -- "$CPU2026_MAKE")
+case ":$PATH:" in
+  *":$_my_make_dir:"*) ;;
+  *) export PATH="$_my_make_dir:$PATH" ;;
+esac
+unset _my_make_dir _my_make_version

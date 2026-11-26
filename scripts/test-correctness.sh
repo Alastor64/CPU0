@@ -22,9 +22,12 @@
 #   MAX_CYCLES           用例周期上限，默认 12000000
 #   LATENCY              测试台响应延迟，默认 10
 #   JOBS                 编译并行任务数，默认 4
+#   CPU2026_MAKE         GNU Make 4.4.x，默认 ../tools/make-4.4.1-install/bin/make
 set -euo pipefail
 
 scripts_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=env.sh
+source "$scripts_dir/env.sh"
 repo_root=$(cd -- "$scripts_dir/.." && pwd)
 framework=${RISC_V_CPU_2026_DIR:-"$repo_root/../RISC-V-CPU-2026"}
 
@@ -43,7 +46,7 @@ case_name=
 directed_dir=
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -96,7 +99,7 @@ fi
 if [ "$rebuild" -eq 1 ] || [ ! -x "$sim" ]; then
   "$scripts_dir/gen.sh" v0 cpu.generate.Generate "$generated_rel"
   printf 'student_top.sv\n' > "$filelist"
-  make -C "$framework" build \
+  "$MAKE" -C "$framework" build \
     FILELIST="$filelist" \
     BUILD="$build_dir" \
     JOBS="$jobs"

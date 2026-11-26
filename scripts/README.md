@@ -53,9 +53,11 @@ source scripts/env.sh
 | --- | --- | --- |
 | `CPU2026_APPDIR` | `tools/cpu2026` | 课程工具链根目录 |
 | `CPU2026_ASAP7_LIB` | `tools/cpu2026/asap7/lib` | 综合使用的五个 ASAP7 `.lib` |
+| `CPU2026_MAKE` | `../tools/make-4.4.1-install/bin/make` | GNU Make 4.4.x 可执行文件 |
 | `SBT_LAUNCH` | `tools/sbt-launch.jar` | sbt 启动器 |
 
-它还会把 `tools/cpu2026/bin` 加入 `PATH`。本目录中的 `sbt.sh`、`gen.sh`、
+它还会把 `tools/cpu2026/bin` 和 Make 4.4 所在目录加入 `PATH`，并导出
+`MAKE` 供 Verilator 内部构建使用。本目录中的 `sbt.sh`、`gen.sh`、
 `sim.sh`、`synth.sh` 和 `publish.sh` 会自动加载该环境，因此单独调用包装脚本
 时不必先 `source`。直接调用 `verilator`、`yosys`、`sta`，或让助教框架执行
 `make` 时，仍需先加载：
@@ -64,6 +66,9 @@ source scripts/env.sh
 source scripts/env.sh
 make -C ../RISC-V-CPU-2026 ...
 ```
+
+`env.sh` 会校验 Make 必须是 4.4.x；未安装时给出 `CPU2026_MAKE` 错误，
+避免静默退回系统自带的 Make 4.3。
 
 ## 构建与生成
 
@@ -162,6 +167,7 @@ scripts/test-correctness.sh --rebuild
 | `MAX_CYCLES` | `12000000` | 用例周期上限 |
 | `LATENCY` | `10` | 测试台响应延迟参数 |
 | `JOBS` | `4` | 重新编译仿真器时的并行任务数 |
+| `CPU2026_MAKE` | `../tools/make-4.4.1-install/bin/make` | 重新编译时使用的 GNU Make 4.4.x |
 
 当 `--rebuild` 生效或默认仿真器不存在时，脚本会：
 
