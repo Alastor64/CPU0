@@ -62,5 +62,4 @@ class Op extends Bundle{
     val rd=UInt(32.W)
     val r1=UInt(32.W)
     val r2=UInt(32.W)
-    val id=UInt(32.W)
 }

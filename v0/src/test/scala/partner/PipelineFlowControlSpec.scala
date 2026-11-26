@@ -48,7 +48,6 @@ class PipelineFlowControlSpec extends AnyFlatSpec with Matchers {
       dut.io.cur_op(i).rd.poke(0.U)
       dut.io.cur_op(i).r1.poke(0.U)
       dut.io.cur_op(i).r2.poke(0.U)
-      dut.io.cur_op(i).id.poke(0.U)
       dut.io.predictor_result(i).poke(0.U)
     }
     for (i <- 0 until 6) {

@@ -85,7 +85,6 @@ class Decoder extends Module{
     for (i<-0 until issueWidth){
         io.out_id(i):=id_reg(i)
         io.out_prediction(i):=prediction_reg(i)
-        io.out_op(i).id:=0.U(32.W)
         // Invalid instructions and unsupported opcodes must still produce a
         // deterministic, inert decode result.
         io.out_op(i).rd:=0.U(32.W)
